@@ -21,8 +21,9 @@
 use crate::types::{Node, Training, MAX_NODE_DIST, MAX_OPP_OVLP, STOP};
 use std::os::raw::c_int;
 
-use crate::connection_filter::{allowed_for, class_of, keep};
+use crate::connection_filter::{allowed_for, class_of};
 use crate::node::intergenic_mod;
+
 
 /// Basic dynamic programming routine for predicting genes.  The `flag` variable
 /// is set to 0 for the initial dynamic programming routine based solely on GC
@@ -49,7 +50,6 @@ pub unsafe fn dprog(nod: *mut Node, nn: c_int, tinf: *mut Training, flag: c_int)
     for i in 0..nn {
         classes.push(class_of(nod.offset(i as isize)));
     }
-    let mut reachable: Vec<c_int> = Vec::with_capacity(MAX_NODE_DIST as usize * 2);
 
     for i in 0..nn {
         /* Set up distance constraints for making connections, */
@@ -81,13 +81,10 @@ pub unsafe fn dprog(nod: *mut Node, nn: c_int, tinf: *mut Training, flag: c_int)
             min -= MAX_NODE_DIST;
         }
         let table = allowed_for(nod.offset(i as isize));
-        keep(
-            &classes[min as usize..i as usize],
-            &table,
-            &mut reachable,
-        );
-        for offset in &reachable {
-            score_connection(nod, min + *offset, i, tinf, flag);
+        for j in min..i {
+            if *table.get_unchecked(*classes.get_unchecked(j as usize) as usize) != 0 {
+                score_connection(nod, j, i, tinf, flag);
+            }
         }
         classes[i as usize] = class_of(nod.offset(i as isize));
     }

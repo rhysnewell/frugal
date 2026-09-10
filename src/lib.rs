@@ -20,6 +20,7 @@
 
 pub mod api;
 pub mod bitmap;
+pub mod connection_filter;
 pub mod dprog;
 pub mod gene;
 pub mod metagenomic;

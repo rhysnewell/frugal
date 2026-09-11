@@ -1084,6 +1084,8 @@ pub unsafe fn raw_coding_score(
     }
 
     /* Third Pass: Add length-based factor to the score */
+    let lfac_min = ((1.0 - no_stop.powf(80.0)) / no_stop.powf(80.0)).ln();
+    let lfac_max = ((1.0 - no_stop.powf(1000.0)) / no_stop.powf(1000.0)).ln();
     for i in 0..nn {
         let fr = ((*nod.offset(i as isize)).ndx % 3) as usize;
         if (*nod.offset(i as isize)).strand == 1 && (*nod.offset(i as isize)).type_ == STOP {
@@ -1094,12 +1096,13 @@ pub unsafe fn raw_coding_score(
                 + 3.0)
                 / 3.0;
             if gsize > 1000.0 {
-                lfac = ((1.0 - no_stop.powf(1000.0)) / no_stop.powf(1000.0)).ln();
-                lfac -= ((1.0 - no_stop.powf(80.0)) / no_stop.powf(80.0)).ln();
+                lfac = lfac_max;
+                lfac -= lfac_min;
                 lfac *= (gsize - 80.0) / 920.0;
             } else {
-                lfac = ((1.0 - no_stop.powf(gsize)) / no_stop.powf(gsize)).ln();
-                lfac -= ((1.0 - no_stop.powf(80.0)) / no_stop.powf(80.0)).ln();
+                let tmp = no_stop.powf(gsize);
+                lfac = ((1.0 - tmp) / tmp).ln();
+                lfac -= lfac_min;
             }
             if lfac > score[fr] {
                 score[fr] = lfac;
@@ -1123,12 +1126,13 @@ pub unsafe fn raw_coding_score(
                 + 3.0)
                 / 3.0;
             if gsize > 1000.0 {
-                lfac = ((1.0 - no_stop.powf(1000.0)) / no_stop.powf(1000.0)).ln();
-                lfac -= ((1.0 - no_stop.powf(80.0)) / no_stop.powf(80.0)).ln();
+                lfac = lfac_max;
+                lfac -= lfac_min;
                 lfac *= (gsize - 80.0) / 920.0;
             } else {
-                lfac = ((1.0 - no_stop.powf(gsize)) / no_stop.powf(gsize)).ln();
-                lfac -= ((1.0 - no_stop.powf(80.0)) / no_stop.powf(80.0)).ln();
+                let tmp = no_stop.powf(gsize);
+                lfac = ((1.0 - tmp) / tmp).ln();
+                lfac -= lfac_min;
             }
             if lfac > score[fr] {
                 score[fr] = lfac;

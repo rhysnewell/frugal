@@ -176,11 +176,55 @@ fn load_meta_models() -> Vec<Box<Training>> {
     models
 }
 
-/// Run the metagenomic gene-prediction pipeline on a single sequence.
-///
-/// Encodes the input, rebuilds node arrays when the translation table changes,
-/// scores all GC-compatible models, keeps the highest-scoring solution, and
-/// converts its genes to `PredictedGene` values.
+struct NodeState {
+    nn: c_int,
+    masks_fresh: bool,
+    built_table: Option<c_int>,
+}
+
+unsafe fn prepare_nodes(
+    buf: &mut SequenceBuffer,
+    tinf: &mut Training,
+    slen: c_int,
+    closed: c_int,
+    state: &mut NodeState,
+) -> *const u32 {
+    if state.built_table != Some(tinf.trans_table) {
+        state.built_table = Some(tinf.trans_table);
+        buf.clear_nodes(state.nn);
+        state.nn = add_nodes(
+            buf.seq.as_mut_ptr(),
+            buf.rseq.as_mut_ptr(),
+            slen,
+            buf.nodes.as_mut_ptr(),
+            closed,
+            buf.masks.as_mut_ptr(),
+            buf.nmask,
+            tinf,
+        );
+        buf.nodes[..state.nn as usize]
+            .sort_unstable_by(|a, b| a.ndx.cmp(&b.ndx).then(b.strand.cmp(&a.strand)));
+        state.masks_fresh = false;
+    }
+
+    if tinf.uses_sd == 1 && !state.masks_fresh {
+        buf.ensure_rbs_capacity(state.nn);
+        record_rbs_masks(
+            buf.seq.as_mut_ptr(),
+            buf.rseq.as_mut_ptr(),
+            slen,
+            buf.nodes.as_mut_ptr(),
+            state.nn,
+            buf.rbs_masks.as_mut_ptr(),
+        );
+        state.masks_fresh = true;
+    }
+    match state.masks_fresh {
+        true => buf.rbs_masks.as_ptr(),
+        false => std::ptr::null(),
+    }
+}
+
 fn predict_parallel(
     seq: &[u8],
     models: &mut [Box<Training>],
@@ -195,7 +239,6 @@ fn predict_parallel(
     }
     buf.ensure_node_capacity(slen);
 
-    // GC window for model selection
     let mut low = 0.88495 * gc - 0.0102337;
     if low > 0.65 {
         low = 0.65;
@@ -209,67 +252,64 @@ fn predict_parallel(
     let mut best_nodes = Vec::new();
     let mut best_genes: Vec<Gene> = Vec::new();
     let mut best_tinf: Option<usize> = None;
-    let mut nn: c_int = 0;
-    let mut masks_fresh = false;
-    let mut built_table: Option<c_int> = None;
+    let mut state = NodeState {
+        nn: 0,
+        masks_fresh: false,
+        built_table: None,
+    };
+
+    let mut chosen: Vec<usize> = (0..NUM_META)
+        .filter(|i| models[*i].gc >= low && models[*i].gc <= high)
+        .collect();
 
     unsafe {
-        for i in 0..NUM_META {
-            if models[i].gc < low || models[i].gc > high {
-                continue;
-            }
-            let tinf: &mut Training = &mut models[i];
-
-            if built_table != Some(tinf.trans_table) {
-                built_table = Some(tinf.trans_table);
-                buf.clear_nodes(nn);
-                nn = add_nodes(
+        if config.model_depth > 0 && chosen.len() > config.model_depth {
+            let mut ranked: Vec<(usize, f64)> = Vec::with_capacity(chosen.len());
+            for i in &chosen {
+                let tinf: &mut Training = &mut models[*i];
+                let rbs_masks = prepare_nodes(buf, tinf, slen, closed, &mut state);
+                reset_node_scores(buf.nodes.as_mut_ptr(), state.nn);
+                score_nodes_with_rbs(
                     buf.seq.as_mut_ptr(),
                     buf.rseq.as_mut_ptr(),
                     slen,
                     buf.nodes.as_mut_ptr(),
-                    closed,
-                    buf.masks.as_mut_ptr(),
-                    buf.nmask,
+                    state.nn,
                     tinf,
+                    closed,
+                    1,
+                    rbs_masks,
                 );
-                buf.nodes[..nn as usize]
-                    .sort_unstable_by(|a, b| a.ndx.cmp(&b.ndx).then(b.strand.cmp(&a.strand)));
-                masks_fresh = false;
+                let mut peak = f64::NEG_INFINITY;
+                for node in &buf.nodes[..state.nn as usize] {
+                    peak = peak.max(node.cscore + node.sscore);
+                }
+                ranked.push((*i, peak));
             }
+            ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+            ranked.truncate(config.model_depth);
+            chosen = ranked.iter().map(|(i, _)| *i).collect();
+            chosen.sort_unstable();
+        }
 
-            if tinf.uses_sd == 1 && !masks_fresh {
-                buf.ensure_rbs_capacity(nn);
-                record_rbs_masks(
-                    buf.seq.as_mut_ptr(),
-                    buf.rseq.as_mut_ptr(),
-                    slen,
-                    buf.nodes.as_mut_ptr(),
-                    nn,
-                    buf.rbs_masks.as_mut_ptr(),
-                );
-                masks_fresh = true;
-            }
-            let rbs_masks = if masks_fresh {
-                buf.rbs_masks.as_ptr()
-            } else {
-                std::ptr::null()
-            };
-            reset_node_scores(buf.nodes.as_mut_ptr(), nn);
+        for i in &chosen {
+            let tinf: &mut Training = &mut models[*i];
+            let rbs_masks = prepare_nodes(buf, tinf, slen, closed, &mut state);
+            reset_node_scores(buf.nodes.as_mut_ptr(), state.nn);
             score_nodes_with_rbs(
                 buf.seq.as_mut_ptr(),
                 buf.rseq.as_mut_ptr(),
                 slen,
                 buf.nodes.as_mut_ptr(),
-                nn,
+                state.nn,
                 tinf,
                 closed,
                 1,
                 rbs_masks,
             );
-            record_overlapping_starts(buf.nodes.as_mut_ptr(), nn, tinf, 1);
-            let ipath = dprog(buf.nodes.as_mut_ptr(), nn, tinf, 1);
-            if ipath < 0 || ipath >= nn {
+            record_overlapping_starts(buf.nodes.as_mut_ptr(), state.nn, tinf, 1);
+            let ipath = dprog(buf.nodes.as_mut_ptr(), state.nn, tinf, 1);
+            if ipath < 0 || ipath >= state.nn {
                 continue;
             }
 
@@ -283,7 +323,7 @@ fn predict_parallel(
                     buf.genes.as_mut_ptr(),
                     ng,
                     buf.nodes.as_mut_ptr(),
-                    nn,
+                    state.nn,
                     tinf,
                 );
                 let kept = (ng.max(0) as usize).min(buf.genes.len());
@@ -295,13 +335,13 @@ fn predict_parallel(
                 }
 
                 best_nodes.clear();
-                best_nodes.extend_from_slice(&buf.nodes[..nn as usize]);
-                best_tinf = Some(i);
+                best_nodes.extend_from_slice(&buf.nodes[..state.nn as usize]);
+                best_tinf = Some(*i);
             }
         }
     }
 
-    buf.mark_nodes(nn);
+    buf.mark_nodes(state.nn);
 
     let Some(best) = best_tinf else {
         return Ok(Vec::new());

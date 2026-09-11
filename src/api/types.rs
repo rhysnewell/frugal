@@ -82,6 +82,9 @@ pub struct ProdigalConfig {
     pub mask_n_runs: bool,
     /// Bypass Shine-Dalgarno trainer, force full motif scan.
     pub force_non_sd: bool,
+    /// In meta mode, run the full path only for this many models, ranked by their best node
+    /// score. 0 runs every model in the GC window.
+    pub model_depth: usize,
 }
 
 impl Default for ProdigalConfig {
@@ -91,6 +94,7 @@ impl Default for ProdigalConfig {
             closed_ends: false,
             mask_n_runs: false,
             force_non_sd: false,
+            model_depth: 0,
         }
     }
 }

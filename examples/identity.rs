@@ -8,6 +8,7 @@ fn main() {
     let path = args.next().expect("fasta path");
     let min_length: usize = args.next().map(|v| v.parse().unwrap()).unwrap_or(1500);
     let threads: usize = args.next().map(|v| v.parse().unwrap()).unwrap_or(4);
+    let depth: usize = args.next().map(|v| v.parse().unwrap()).unwrap_or(0);
 
     let text = std::fs::read_to_string(&path).expect("read fasta");
     let mut contigs: Vec<Vec<u8>> = Vec::new();
@@ -31,9 +32,11 @@ fn main() {
         .stack_size(META_PREDICTOR_STACK_SIZE)
         .build()
         .unwrap();
-    let predictor =
-        MetaPredictor::with_config_and_thread_pool(ProdigalConfig::default(), Arc::new(pool))
-            .unwrap();
+    let config = ProdigalConfig {
+        model_depth: depth,
+        ..ProdigalConfig::default()
+    };
+    let predictor = MetaPredictor::with_config_and_thread_pool(config, Arc::new(pool)).unwrap();
 
     let slices = contigs.iter().map(|c| c.as_slice()).collect::<Vec<_>>();
     let started = std::time::Instant::now();

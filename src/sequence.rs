@@ -1446,3 +1446,228 @@ mod tests {
         }
     }
 }
+
+pub unsafe fn shine_dalgarno_exact_mask(
+    seq: *mut u8,
+    pos: c_int,
+    start: c_int,
+) -> u32 {
+    let mut cur_val: c_int = 0;
+    let mut match_: [c_int; 6] = [-10; 6];
+    let mut cur_ctr: c_int;
+    let mut dis_flag: c_int;
+
+    let limit = imin(6, start - 4 - pos);
+
+    /* Compare the 6-base region to AGGAGG */
+    for i in 0..limit {
+        if pos + i >= 0 {
+            debug_assert!((0..6).contains(&i));
+            if i % 3 == 0 && is_a(seq, pos + i) == 1 {
+                match_[i as usize] = 2;
+            } else if i % 3 != 0 && is_g(seq, pos + i) == 1 {
+                match_[i as usize] = 3;
+            }
+        }
+    }
+
+    /* Find the maximally scoring motif */
+    let mut mask: u32 = 1;
+    let mut i = limit;
+    while i >= 3 {
+        for j in 0..=(limit - i) {
+            cur_ctr = -2;
+            let mut mism: c_int = 0;
+            for k in j..(j + i) {
+                debug_assert!((0..6).contains(&k));
+                let match_k = match_[k as usize];
+                cur_ctr += match_k;
+                if match_k < 0 {
+                    mism += 1;
+                }
+            }
+            if mism > 0 {
+                continue;
+            }
+            let rdis = start - (pos + j + i);
+            if rdis < 5 && i < 5 {
+                dis_flag = 2;
+            } else if rdis < 5 && i >= 5 {
+                dis_flag = 1;
+            } else if rdis > 10 && rdis <= 12 && i < 5 {
+                dis_flag = 1;
+            } else if rdis > 10 && rdis <= 12 && i >= 5 {
+                dis_flag = 2;
+            } else if rdis >= 13 {
+                dis_flag = 3;
+            } else {
+                dis_flag = 0;
+            }
+            if rdis > 15 || cur_ctr < 6 {
+                continue;
+            }
+
+            /* Exact-Matching RBS Motifs */
+            if cur_ctr < 6 {
+                cur_val = 0;
+            } else if cur_ctr == 6 && dis_flag == 2 {
+                cur_val = 1;
+            } else if cur_ctr == 6 && dis_flag == 3 {
+                cur_val = 2;
+            } else if cur_ctr == 8 && dis_flag == 3 {
+                cur_val = 3;
+            } else if cur_ctr == 9 && dis_flag == 3 {
+                cur_val = 3;
+            } else if cur_ctr == 6 && dis_flag == 1 {
+                cur_val = 6;
+            } else if cur_ctr == 11 && dis_flag == 3 {
+                cur_val = 10;
+            } else if cur_ctr == 12 && dis_flag == 3 {
+                cur_val = 10;
+            } else if cur_ctr == 14 && dis_flag == 3 {
+                cur_val = 10;
+            } else if cur_ctr == 8 && dis_flag == 2 {
+                cur_val = 11;
+            } else if cur_ctr == 9 && dis_flag == 2 {
+                cur_val = 11;
+            } else if cur_ctr == 8 && dis_flag == 1 {
+                cur_val = 12;
+            } else if cur_ctr == 9 && dis_flag == 1 {
+                cur_val = 12;
+            } else if cur_ctr == 6 && dis_flag == 0 {
+                cur_val = 13;
+            } else if cur_ctr == 8 && dis_flag == 0 {
+                cur_val = 15;
+            } else if cur_ctr == 9 && dis_flag == 0 {
+                cur_val = 16;
+            } else if cur_ctr == 11 && dis_flag == 2 {
+                cur_val = 20;
+            } else if cur_ctr == 11 && dis_flag == 1 {
+                cur_val = 21;
+            } else if cur_ctr == 11 && dis_flag == 0 {
+                cur_val = 22;
+            } else if cur_ctr == 12 && dis_flag == 2 {
+                cur_val = 20;
+            } else if cur_ctr == 12 && dis_flag == 1 {
+                cur_val = 23;
+            } else if cur_ctr == 12 && dis_flag == 0 {
+                cur_val = 24;
+            } else if cur_ctr == 14 && dis_flag == 2 {
+                cur_val = 25;
+            } else if cur_ctr == 14 && dis_flag == 1 {
+                cur_val = 26;
+            } else if cur_ctr == 14 && dis_flag == 0 {
+                cur_val = 27;
+            }
+
+            mask |= 1u32 << cur_val;
+        }
+        i -= 1;
+    }
+
+    mask
+}
+
+pub unsafe fn shine_dalgarno_mm_mask(
+    seq: *mut u8,
+    pos: c_int,
+    start: c_int,
+) -> u32 {
+    let mut cur_val: c_int = 0;
+    let mut match_: [c_int; 6] = [-10; 6];
+    let mut cur_ctr: c_int;
+    let mut dis_flag: c_int;
+
+    let limit = imin(6, start - 4 - pos);
+
+    /* Compare the 6-base region to AGGAGG */
+    for i in 0..limit {
+        if pos + i >= 0 {
+            debug_assert!((0..6).contains(&i));
+            if i % 3 == 0 {
+                if is_a(seq, pos + i) == 1 {
+                    match_[i as usize] = 2;
+                } else {
+                    match_[i as usize] = -3;
+                }
+            } else {
+                if is_g(seq, pos + i) == 1 {
+                    match_[i as usize] = 3;
+                } else {
+                    match_[i as usize] = -2;
+                }
+            }
+        }
+    }
+
+    /* Find the maximally scoring motif */
+    let mut mask: u32 = 1;
+    let mut i = limit;
+    while i >= 5 {
+        for j in 0..=(limit - i) {
+            cur_ctr = -2;
+            let mut mism: c_int = 0;
+            for k in j..(j + i) {
+                debug_assert!((0..6).contains(&k));
+                let match_k = match_[k as usize];
+                cur_ctr += match_k;
+                if match_k < 0 {
+                    mism += 1;
+                }
+                if match_k < 0 && (k <= j + 1 || k >= j + i - 2) {
+                    cur_ctr -= 10;
+                }
+            }
+            if mism != 1 {
+                continue;
+            }
+            let rdis = start - (pos + j + i);
+            if rdis < 5 {
+                dis_flag = 1;
+            } else if rdis > 10 && rdis <= 12 {
+                dis_flag = 2;
+            } else if rdis >= 13 {
+                dis_flag = 3;
+            } else {
+                dis_flag = 0;
+            }
+            if rdis > 15 || cur_ctr < 6 {
+                continue;
+            }
+
+            /* Single-Mismatch RBS Motifs */
+            if cur_ctr < 6 {
+                cur_val = 0;
+            } else if cur_ctr == 6 && dis_flag == 3 {
+                cur_val = 2;
+            } else if cur_ctr == 7 && dis_flag == 3 {
+                cur_val = 2;
+            } else if cur_ctr == 9 && dis_flag == 3 {
+                cur_val = 3;
+            } else if cur_ctr == 6 && dis_flag == 2 {
+                cur_val = 4;
+            } else if cur_ctr == 6 && dis_flag == 1 {
+                cur_val = 5;
+            } else if cur_ctr == 6 && dis_flag == 0 {
+                cur_val = 9;
+            } else if cur_ctr == 7 && dis_flag == 2 {
+                cur_val = 7;
+            } else if cur_ctr == 7 && dis_flag == 1 {
+                cur_val = 8;
+            } else if cur_ctr == 7 && dis_flag == 0 {
+                cur_val = 14;
+            } else if cur_ctr == 9 && dis_flag == 2 {
+                cur_val = 17;
+            } else if cur_ctr == 9 && dis_flag == 1 {
+                cur_val = 18;
+            } else if cur_ctr == 9 && dis_flag == 0 {
+                cur_val = 19;
+            }
+
+            mask |= 1u32 << cur_val;
+        }
+        i -= 1;
+    }
+
+    mask
+}

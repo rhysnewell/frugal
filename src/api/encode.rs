@@ -2,6 +2,7 @@ use std::os::raw::c_int;
 
 use crate::bitmap::set;
 use crate::sequence::rcom_seq;
+use crate::node::RBS_MASKS_PER_NODE;
 use crate::types::{Gene, Mask, Node, MASK_SIZE, MAX_GENES, MAX_MASKS, MAX_SEQ, STT_NOD};
 
 /// Internal scratch buffers for the prediction pipeline.
@@ -12,6 +13,7 @@ pub(crate) struct SequenceBuffer {
     pub nodes: Vec<Node>,
     pub genes: Vec<Gene>,
     pub masks: Vec<Mask>,
+    pub rbs_masks: Vec<u32>,
     pub nmask: c_int,
     prev_len: usize,
     prev_nn: usize,
@@ -37,6 +39,7 @@ impl SequenceBuffer {
             nodes: vec![unsafe { std::mem::zeroed() }; STT_NOD],
             genes: vec![unsafe { std::mem::zeroed() }; MAX_GENES],
             masks: vec![unsafe { std::mem::zeroed() }; MAX_MASKS],
+            rbs_masks: Vec::new(),
             nmask: 0,
             prev_len: 0,
             prev_nn: 0,
@@ -264,6 +267,13 @@ impl SequenceBuffer {
         let needed = (slen as usize) / 8;
         if needed > self.nodes.len() {
             self.nodes.resize(needed, unsafe { std::mem::zeroed() });
+        }
+    }
+
+    pub fn ensure_rbs_capacity(&mut self, nn: c_int) {
+        let needed = (nn.max(0) as usize) * RBS_MASKS_PER_NODE;
+        if self.rbs_masks.len() < needed {
+            self.rbs_masks.resize(needed, 0);
         }
     }
 

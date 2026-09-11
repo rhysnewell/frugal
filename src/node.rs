@@ -31,6 +31,7 @@ use crate::types::{
 };
 
 use crate::sequence::{calc_mer_bg, max_fr, mer_text};
+use crate::sequence::{shine_dalgarno_exact_mask, shine_dalgarno_mm_mask};
 
 /// Write a Rust string to a file descriptor.
 #[inline]
@@ -668,6 +669,31 @@ pub unsafe fn score_nodes(
     closed: c_int,
     is_meta: c_int,
 ) {
+    score_nodes_with_rbs(
+        seq,
+        rseq,
+        slen,
+        nod,
+        nn,
+        tinf,
+        closed,
+        is_meta,
+        std::ptr::null(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn score_nodes_with_rbs(
+    seq: *mut u8,
+    rseq: *mut u8,
+    slen: c_int,
+    nod: *mut Node,
+    nn: c_int,
+    tinf: *mut Training,
+    closed: c_int,
+    is_meta: c_int,
+    rbs_masks: *const u32,
+) {
     let mut negf: f64;
     let mut posf: f64;
     let mut rbs1: f64;
@@ -682,7 +708,11 @@ pub unsafe fn score_nodes(
 
     /* Step 2: Calculate raw RBS Scores for every start node. */
     if (*tinf).uses_sd == 1 {
-        rbs_score(seq, rseq, slen, nod, nn, tinf);
+        if rbs_masks.is_null() {
+            rbs_score(seq, rseq, slen, nod, nn, tinf);
+        } else {
+            rbs_score_from_masks(nod, nn, tinf, rbs_masks);
+        }
     } else {
         for i in 0..nn {
             if (*nod.offset(i as isize)).type_ == STOP || (*nod.offset(i as isize)).edge == 1 {
@@ -1149,6 +1179,101 @@ pub unsafe fn determine_sd_usage(tinf: *mut Training) {
 /// with both `shine_dalgarno_exact` and `shine_dalgarno_mm` and the best
 /// scoring exact and mismatch indices are stored in `nod[i].rbs[0]` and
 /// `nod[i].rbs[1]`.
+
+pub const RBS_SLOTS: usize = 15;
+pub const RBS_MASKS_PER_NODE: usize = RBS_SLOTS * 2;
+
+/// The Shine-Dalgarno candidate set at a start depends only on the sequence; the model enters
+/// solely through the `rbs_wt` argmax, so the candidates are recorded once and folded per model.
+pub unsafe fn record_rbs_masks(
+    seq: *mut u8,
+    rseq: *mut u8,
+    slen: c_int,
+    nod: *mut Node,
+    nn: c_int,
+    masks: *mut u32,
+) {
+    for i in 0..nn {
+        let slot_base = i as usize * RBS_MASKS_PER_NODE;
+        for k in 0..RBS_MASKS_PER_NODE {
+            *masks.add(slot_base + k) = 0;
+        }
+        if (*nod.offset(i as isize)).type_ == STOP || (*nod.offset(i as isize)).edge == 1 {
+            continue;
+        }
+        let (wseq, first, start) = if (*nod.offset(i as isize)).strand == 1 {
+            (
+                seq,
+                (*nod.offset(i as isize)).ndx - 20,
+                (*nod.offset(i as isize)).ndx,
+            )
+        } else if (*nod.offset(i as isize)).strand == -1 {
+            (
+                rseq,
+                slen - (*nod.offset(i as isize)).ndx - 21,
+                slen - 1 - (*nod.offset(i as isize)).ndx,
+            )
+        } else {
+            continue;
+        };
+        for slot in 0..RBS_SLOTS {
+            let j = first + slot as c_int;
+            if (*nod.offset(i as isize)).strand == 1 {
+                if j < 0 {
+                    continue;
+                }
+            } else if j > slen - 1 {
+                continue;
+            }
+            *masks.add(slot_base + slot) = shine_dalgarno_exact_mask(wseq, j, start);
+            *masks.add(slot_base + RBS_SLOTS + slot) = shine_dalgarno_mm_mask(wseq, j, start);
+        }
+    }
+}
+
+unsafe fn best_of_mask(mask: u32, rwt: *const f64) -> c_int {
+    let mut best: c_int = 0;
+    let mut rest = mask & !1u32;
+    while rest != 0 {
+        let value = rest.trailing_zeros() as c_int;
+        rest &= rest - 1;
+        let weight = *rwt.add(value as usize);
+        let current = *rwt.add(best as usize);
+        if weight > current || (weight == current && value > best) {
+            best = value;
+        }
+    }
+    best
+}
+
+unsafe fn rbs_score_from_masks(nod: *mut Node, nn: c_int, tinf: *mut Training, masks: *const u32) {
+    let rwt = (*tinf).rbs_wt.as_ptr();
+    for i in 0..nn {
+        if (*nod.offset(i as isize)).type_ == STOP || (*nod.offset(i as isize)).edge == 1 {
+            continue;
+        }
+        (*nod.offset(i as isize)).rbs[0] = 0;
+        (*nod.offset(i as isize)).rbs[1] = 0;
+        let slot_base = i as usize * RBS_MASKS_PER_NODE;
+        for slot in 0..RBS_SLOTS {
+            let exact = *masks.add(slot_base + slot);
+            if exact != 0 {
+                let value = best_of_mask(exact, rwt);
+                if value > (*nod.offset(i as isize)).rbs[0] {
+                    (*nod.offset(i as isize)).rbs[0] = value;
+                }
+            }
+            let mm = *masks.add(slot_base + RBS_SLOTS + slot);
+            if mm != 0 {
+                let value = best_of_mask(mm, rwt);
+                if value > (*nod.offset(i as isize)).rbs[1] {
+                    (*nod.offset(i as isize)).rbs[1] = value;
+                }
+            }
+        }
+    }
+}
+
 pub unsafe fn rbs_score(
     seq: *mut u8,
     rseq: *mut u8,

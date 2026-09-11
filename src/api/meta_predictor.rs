@@ -25,7 +25,10 @@ pub const META_PREDICTOR_STACK_SIZE: usize = 32 * 1024 * 1024; // 32 MB
 
 use crate::dprog::{dprog, eliminate_bad_genes};
 use crate::gene::{add_genes, record_gene_data, tweak_final_starts};
-use crate::node::{add_nodes, record_overlapping_starts, reset_node_scores, score_nodes};
+use crate::node::{
+    add_nodes, record_overlapping_starts, record_rbs_masks, reset_node_scores,
+    score_nodes_with_rbs,
+};
 
 /// Reusable metagenomic gene predictor.
 ///
@@ -207,6 +210,7 @@ fn predict_parallel(
     let mut best_genes: Vec<Gene> = Vec::new();
     let mut best_tinf: Option<usize> = None;
     let mut nn: c_int = 0;
+    let mut masks_fresh = false;
 
     unsafe {
         for i in 0..NUM_META {
@@ -231,14 +235,32 @@ fn predict_parallel(
                 );
                 buf.nodes[..nn as usize]
                     .sort_unstable_by(|a, b| a.ndx.cmp(&b.ndx).then(b.strand.cmp(&a.strand)));
+                masks_fresh = false;
             }
 
             if !in_window {
                 continue;
             }
 
+            if tinf.uses_sd == 1 && !masks_fresh {
+                buf.ensure_rbs_capacity(nn);
+                record_rbs_masks(
+                    buf.seq.as_mut_ptr(),
+                    buf.rseq.as_mut_ptr(),
+                    slen,
+                    buf.nodes.as_mut_ptr(),
+                    nn,
+                    buf.rbs_masks.as_mut_ptr(),
+                );
+                masks_fresh = true;
+            }
+            let rbs_masks = if masks_fresh {
+                buf.rbs_masks.as_ptr()
+            } else {
+                std::ptr::null()
+            };
             reset_node_scores(buf.nodes.as_mut_ptr(), nn);
-            score_nodes(
+            score_nodes_with_rbs(
                 buf.seq.as_mut_ptr(),
                 buf.rseq.as_mut_ptr(),
                 slen,
@@ -247,6 +269,7 @@ fn predict_parallel(
                 tinf,
                 closed,
                 1,
+                rbs_masks,
             );
             record_overlapping_starts(buf.nodes.as_mut_ptr(), nn, tinf, 1);
             let ipath = dprog(buf.nodes.as_mut_ptr(), nn, tinf, 1);

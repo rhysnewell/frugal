@@ -7,7 +7,7 @@ use std::process;
 ///
 /// Prodigal v2.6.3 — fully rewritten in Rust.
 #[derive(Parser, Debug)]
-#[command(name = "prodigal-rs", version = "2.6.3")]
+#[command(name = "frugal", version = "2.6.3")]
 struct Cli {
     /// Write protein translations to the selected file
     #[arg(short = 'a')]
@@ -128,7 +128,7 @@ fn main() {
         },
     };
 
-    let config = prodigal_rs::pipeline::PipelineConfig {
+    let config = frugal::pipeline::PipelineConfig {
         input_file: cli.input_file,
         output_file: cli.output_file,
         trans_file: cli.trans_file,
@@ -144,7 +144,7 @@ fn main() {
         quiet: cli.quiet,
     };
 
-    let rc = unsafe { prodigal_rs::pipeline::run_pipeline(&config) };
+    let rc = unsafe { frugal::pipeline::run_pipeline(&config) };
 
     process::exit(rc);
 }

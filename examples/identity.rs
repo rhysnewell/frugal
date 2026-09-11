@@ -1,7 +1,7 @@
 use std::io::{BufWriter, Write};
 use std::sync::Arc;
 
-use prodigal_rs::api::{META_PREDICTOR_STACK_SIZE, MetaPredictor, ProdigalConfig, Strand};
+use frugal::api::{META_PREDICTOR_STACK_SIZE, MetaPredictor, ProdigalConfig, Strand};
 
 fn main() {
     let mut args = std::env::args().skip(1);

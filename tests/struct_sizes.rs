@@ -72,7 +72,7 @@ fn get_c_sizes() -> Vec<(String, usize)> {
 
 #[test]
 fn test_struct_sizes_match_c() {
-    use prodigal_rs::types::*;
+    use frugal::types::*;
 
     let c_sizes = get_c_sizes();
 

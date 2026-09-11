@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use prodigal_rs::{
+use frugal::{
     predict, predict_meta, train, MetaPredictor, ProdigalConfig, StartCodon, Strand,
     META_PREDICTOR_STACK_SIZE,
 };
@@ -215,7 +215,7 @@ fn test_training_save_load_roundtrip() {
     let path = dir.path().join("test.trn");
 
     training.save(&path).unwrap();
-    let loaded = prodigal_rs::TrainingData::load(&path).unwrap();
+    let loaded = frugal::TrainingData::load(&path).unwrap();
 
     assert_eq!(training.gc(), loaded.gc());
     assert_eq!(training.translation_table(), loaded.translation_table());
@@ -278,7 +278,7 @@ fn test_custom_config() {
         closed_ends: true,
         ..Default::default()
     };
-    let genes = prodigal_rs::predict_meta_with(seq, &config).unwrap();
+    let genes = frugal::predict_meta_with(seq, &config).unwrap();
     // With closed ends, edge genes are suppressed
     for g in &genes {
         assert!(
@@ -349,7 +349,7 @@ fn load_fasta_sequence(path: &std::path::Path) -> Vec<u8> {
         .collect()
 }
 
-/// Test that prodigal-rs meta mode produces identical gene coordinates to
+/// Test that meta mode produces identical gene coordinates to
 /// the C Prodigal binary on a real bacterial plasmid (E. faecium AUS0004_p1).
 ///
 /// Reference coordinates from: `prodigal -c -m -g 11 -p meta -f sco`
@@ -375,7 +375,7 @@ fn test_prokka_plasmid_meta_coordinates() {
         mask_n_runs: true,
         ..Default::default()
     };
-    let genes = prodigal_rs::predict_meta_with(&seq, &config).unwrap();
+    let genes = frugal::predict_meta_with(&seq, &config).unwrap();
 
     // Reference: 63 genes from C Prodigal v2.6.3 meta mode
     // Format: (begin, end, strand)

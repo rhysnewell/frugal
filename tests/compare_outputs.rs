@@ -22,7 +22,7 @@ fn c_binary() -> PathBuf {
 
 /// Path to the Rust wrapper binary (built by cargo).
 fn rust_binary() -> PathBuf {
-    let p = Path::new(env!("CARGO_BIN_EXE_prodigal-rs"));
+    let p = Path::new(env!("CARGO_BIN_EXE_frugal"));
     assert!(p.exists(), "Rust binary not found at {}", p.display());
     p.to_path_buf()
 }

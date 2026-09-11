@@ -1,7 +1,7 @@
-use prodigal_rs::connection::{backward_start, backward_stop, forward_start, forward_stop};
-use prodigal_rs::connection_filter::{allowed_for, class_of};
-use prodigal_rs::node::intergenic_mod;
-use prodigal_rs::types::{Node, Training, MAX_OPP_OVLP, STOP};
+use frugal::connection::{backward_start, backward_stop, forward_start, forward_stop};
+use frugal::connection_filter::{allowed_for, class_of};
+use frugal::node::intergenic_mod;
+use frugal::types::{Node, Training, MAX_OPP_OVLP, STOP};
 use std::os::raw::c_int;
 
 struct Lcg(u64);

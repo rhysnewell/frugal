@@ -13,7 +13,7 @@ use rayon::ThreadPool;
 use super::convert::gene_to_predicted;
 use super::encode::SequenceBuffer;
 use super::types::{PredictedGene, ProdigalConfig, ProdigalError};
-use crate::types::{Gene, Training, MAX_GENES, MAX_SEQ, NUM_META};
+use crate::types::{Gene, Training, MAX_SEQ, NUM_META};
 
 use super::predict::validate_config;
 
@@ -92,8 +92,10 @@ impl MetaPredictor {
     pub fn predict(&self, seq: &[u8]) -> Result<Vec<PredictedGene>, ProdigalError> {
         validate_sequence(seq)?;
 
-        self.pool
-            .install(|| predict_parallel(seq, &self.models, &self.config))
+        self.pool.install(|| {
+            let mut worker = Worker::new(&self.models);
+            predict_parallel(seq, &mut worker.models, &self.config, &mut worker.buf)
+        })
     }
 
     /// Predict genes in a batch of sequences, preserving input order.
@@ -105,11 +107,38 @@ impl MetaPredictor {
             validate_sequence(seq.as_ref())?;
         }
 
-        self.pool.install(|| {
+        let models = Arc::clone(&self.models);
+        self.pool.install(move || {
             seqs.par_iter()
-                .map(|seq| predict_parallel(seq.as_ref(), &self.models, &self.config))
+                .map_init(
+                    || Worker::new(&models),
+                    |worker, seq| {
+                        predict_parallel(
+                            seq.as_ref(),
+                            &mut worker.models,
+                            &self.config,
+                            &mut worker.buf,
+                        )
+                    },
+                )
                 .collect()
         })
+    }
+}
+
+/// Per-thread state. Each worker owns its own copy of the 50 models so the scoring path can
+/// take them by mutable reference without copying one per candidate.
+struct Worker {
+    buf: SequenceBuffer,
+    models: Vec<Box<Training>>,
+}
+
+impl Worker {
+    fn new(models: &[Box<Training>]) -> Self {
+        Worker {
+            buf: SequenceBuffer::reusable(),
+            models: models.iter().map(|model| model.clone()).collect(),
+        }
     }
 }
 
@@ -151,12 +180,12 @@ fn load_meta_models() -> Vec<Box<Training>> {
 /// converts its genes to `PredictedGene` values.
 fn predict_parallel(
     seq: &[u8],
-    models: &[Box<Training>],
+    models: &mut [Box<Training>],
     config: &ProdigalConfig,
+    buf: &mut SequenceBuffer,
 ) -> Result<Vec<PredictedGene>, ProdigalError> {
     let closed = if config.closed_ends { 1 } else { 0 };
 
-    let mut buf = SequenceBuffer::with_base_capacity(seq.len());
     let (slen, gc) = unsafe { buf.encode(seq, config.mask_n_runs) };
     if slen == 0 {
         return Err(ProdigalError::EmptySequence);
@@ -176,13 +205,17 @@ fn predict_parallel(
     let mut best_score = f64::NEG_INFINITY;
     let mut best_nodes = Vec::new();
     let mut best_genes: Vec<Gene> = Vec::new();
-    let mut best_tinf: Option<Training> = None;
+    let mut best_tinf: Option<usize> = None;
     let mut nn: c_int = 0;
 
     unsafe {
         for i in 0..NUM_META {
             let need_rebuild = i == 0 || models[i].trans_table != models[i - 1].trans_table;
-            let mut tinf = (*models[i]).clone();
+            let in_window = models[i].gc >= low && models[i].gc <= high;
+            if !need_rebuild && !in_window {
+                continue;
+            }
+            let tinf: &mut Training = &mut models[i];
 
             if need_rebuild {
                 buf.clear_nodes(nn);
@@ -194,13 +227,13 @@ fn predict_parallel(
                     closed,
                     buf.masks.as_mut_ptr(),
                     buf.nmask,
-                    &mut tinf,
+                    tinf,
                 );
                 buf.nodes[..nn as usize]
                     .sort_unstable_by(|a, b| a.ndx.cmp(&b.ndx).then(b.strand.cmp(&a.strand)));
             }
 
-            if tinf.gc < low || tinf.gc > high {
+            if !in_window {
                 continue;
             }
 
@@ -211,12 +244,12 @@ fn predict_parallel(
                 slen,
                 buf.nodes.as_mut_ptr(),
                 nn,
-                &mut tinf,
+                tinf,
                 closed,
                 1,
             );
-            record_overlapping_starts(buf.nodes.as_mut_ptr(), nn, &mut tinf, 1);
-            let ipath = dprog(buf.nodes.as_mut_ptr(), nn, &mut tinf, 1);
+            record_overlapping_starts(buf.nodes.as_mut_ptr(), nn, tinf, 1);
+            let ipath = dprog(buf.nodes.as_mut_ptr(), nn, tinf, 1);
             if ipath < 0 || ipath >= nn {
                 continue;
             }
@@ -224,36 +257,44 @@ fn predict_parallel(
             let score = buf.nodes[ipath as usize].score;
             if score > best_score {
                 best_score = score;
-                eliminate_bad_genes(buf.nodes.as_mut_ptr(), ipath, &mut tinf);
+                eliminate_bad_genes(buf.nodes.as_mut_ptr(), ipath, tinf);
 
-                let mut genes: Vec<Gene> = vec![std::mem::zeroed(); MAX_GENES];
-                let ng = add_genes(genes.as_mut_ptr(), buf.nodes.as_mut_ptr(), ipath);
+                let ng = add_genes(buf.genes.as_mut_ptr(), buf.nodes.as_mut_ptr(), ipath);
                 tweak_final_starts(
-                    genes.as_mut_ptr(),
+                    buf.genes.as_mut_ptr(),
                     ng,
                     buf.nodes.as_mut_ptr(),
                     nn,
-                    &mut tinf,
+                    tinf,
                 );
-                genes.truncate(ng as usize);
+                let kept = (ng.max(0) as usize).min(buf.genes.len());
+                best_genes.clear();
+                best_genes.extend_from_slice(&buf.genes[..kept]);
+                let dirty = (kept + 1).min(buf.genes.len());
+                for gene in &mut buf.genes[..dirty] {
+                    *gene = std::mem::zeroed();
+                }
 
-                best_nodes = buf.nodes[..nn as usize].to_vec();
-                best_genes = genes;
-                best_tinf = Some(tinf);
+                best_nodes.clear();
+                best_nodes.extend_from_slice(&buf.nodes[..nn as usize]);
+                best_tinf = Some(i);
             }
         }
     }
 
-    let Some(mut tinf) = best_tinf else {
+    buf.mark_nodes(nn);
+
+    let Some(best) = best_tinf else {
         return Ok(Vec::new());
     };
+    let tinf: &mut Training = &mut models[best];
 
     unsafe {
         record_gene_data(
             best_genes.as_mut_ptr(),
             best_genes.len() as c_int,
             best_nodes.as_mut_ptr(),
-            &mut tinf,
+            tinf,
             1,
         );
 

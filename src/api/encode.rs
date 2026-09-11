@@ -13,6 +13,8 @@ pub(crate) struct SequenceBuffer {
     pub genes: Vec<Gene>,
     pub masks: Vec<Mask>,
     pub nmask: c_int,
+    prev_len: usize,
+    prev_nn: usize,
 }
 
 impl SequenceBuffer {
@@ -36,7 +38,39 @@ impl SequenceBuffer {
             genes: vec![unsafe { std::mem::zeroed() }; MAX_GENES],
             masks: vec![unsafe { std::mem::zeroed() }; MAX_MASKS],
             nmask: 0,
+            prev_len: 0,
+            prev_nn: 0,
         }
+    }
+
+    /// Node and gene buffers keep their full size because `add_nodes` and `add_genes` write
+    /// through raw pointers with no bound check.
+    pub fn reusable() -> Self {
+        Self::with_base_capacity(0)
+    }
+
+    /// Record how much of the node buffer the caller dirtied, so the next sequence can clear
+    /// exactly that prefix.
+    pub fn mark_nodes(&mut self, nn: c_int) {
+        self.prev_nn = (nn.max(0) as usize).min(self.nodes.len());
+    }
+
+    fn prepare(&mut self, dna_len: usize) {
+        let max_bases = dna_len.min(MAX_SEQ);
+        let seq_bytes = (max_bases / 4 + 2).max(1);
+        let useq_bytes = (max_bases / 8 + 2).max(1);
+        if self.seq.len() < seq_bytes {
+            self.seq.resize(seq_bytes, 0);
+            self.rseq.resize(seq_bytes, 0);
+        }
+        if self.useq.len() < useq_bytes {
+            self.useq.resize(useq_bytes, 0);
+        }
+        self.clear_seq(self.prev_len);
+        for i in 0..self.prev_nn {
+            self.nodes[i] = unsafe { std::mem::zeroed() };
+        }
+        self.prev_nn = 0;
     }
 
     /// Clear sequence buffers for a new sequence.
@@ -52,7 +86,7 @@ impl SequenceBuffer {
     /// Encode a single DNA sequence into the internal 2-bit bitmap format.
     /// Returns (sequence_length, gc_content).
     pub unsafe fn encode(&mut self, dna: &[u8], do_mask: bool) -> (c_int, f64) {
-        self.clear_seq(self.seq.len() * 4);
+        self.prepare(dna.len());
 
         let mut bctr: c_int = 0;
         let mut len: c_int = 0;
@@ -117,6 +151,7 @@ impl SequenceBuffer {
         } else {
             0.0
         };
+        self.prev_len = len as usize;
         (len, gc)
     }
 
@@ -220,6 +255,7 @@ impl SequenceBuffer {
         } else {
             0.0
         };
+        self.prev_len = len as usize;
         (len, gc)
     }
 
@@ -233,8 +269,10 @@ impl SequenceBuffer {
 
     /// Clear node buffer.
     pub fn clear_nodes(&mut self, nn: c_int) {
-        for i in 0..(nn as usize).min(self.nodes.len()) {
+        let dirty = (nn.max(0) as usize).max(self.prev_nn).min(self.nodes.len());
+        for i in 0..dirty {
             self.nodes[i] = unsafe { std::mem::zeroed() };
         }
+        self.prev_nn = 0;
     }
 }

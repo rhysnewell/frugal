@@ -211,17 +211,17 @@ fn predict_parallel(
     let mut best_tinf: Option<usize> = None;
     let mut nn: c_int = 0;
     let mut masks_fresh = false;
+    let mut built_table: Option<c_int> = None;
 
     unsafe {
         for i in 0..NUM_META {
-            let need_rebuild = i == 0 || models[i].trans_table != models[i - 1].trans_table;
-            let in_window = models[i].gc >= low && models[i].gc <= high;
-            if !need_rebuild && !in_window {
+            if models[i].gc < low || models[i].gc > high {
                 continue;
             }
             let tinf: &mut Training = &mut models[i];
 
-            if need_rebuild {
+            if built_table != Some(tinf.trans_table) {
+                built_table = Some(tinf.trans_table);
                 buf.clear_nodes(nn);
                 nn = add_nodes(
                     buf.seq.as_mut_ptr(),
@@ -236,10 +236,6 @@ fn predict_parallel(
                 buf.nodes[..nn as usize]
                     .sort_unstable_by(|a, b| a.ndx.cmp(&b.ndx).then(b.strand.cmp(&a.strand)));
                 masks_fresh = false;
-            }
-
-            if !in_window {
-                continue;
             }
 
             if tinf.uses_sd == 1 && !masks_fresh {

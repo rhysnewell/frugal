@@ -1183,7 +1183,6 @@ pub unsafe fn determine_sd_usage(tinf: *mut Training) {
 /// with both `shine_dalgarno_exact` and `shine_dalgarno_mm` and the best
 /// scoring exact and mismatch indices are stored in `nod[i].rbs[0]` and
 /// `nod[i].rbs[1]`.
-
 pub const RBS_SLOTS: usize = 15;
 pub const RBS_MASKS_PER_NODE: usize = RBS_SLOTS * 2;
 

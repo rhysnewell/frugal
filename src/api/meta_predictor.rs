@@ -140,7 +140,7 @@ impl Worker {
     fn new(models: &[Box<Training>]) -> Self {
         Worker {
             buf: SequenceBuffer::reusable(),
-            models: models.iter().map(|model| model.clone()).collect(),
+            models: models.to_vec(),
         }
     }
 }
@@ -322,7 +322,7 @@ fn predict_parallel(
             result.push(gene_to_predicted(
                 gene,
                 best_nodes.as_ptr(),
-                &tinf,
+                tinf,
                 slen as usize,
             ));
         }

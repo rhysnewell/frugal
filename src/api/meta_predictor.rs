@@ -5,7 +5,7 @@
 
 use std::alloc::{alloc_zeroed, handle_alloc_error, Layout};
 use std::os::raw::c_int;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use rayon::prelude::*;
 use rayon::ThreadPool;
@@ -38,6 +38,7 @@ pub struct MetaPredictor {
     pool: Arc<ThreadPool>,
     models: Arc<Vec<Box<Training>>>,
     config: ProdigalConfig,
+    workers: Vec<Mutex<Worker>>,
 }
 
 impl MetaPredictor {
@@ -83,11 +84,15 @@ impl MetaPredictor {
     ) -> Result<Self, ProdigalError> {
         validate_config(&config)?;
         let models = Arc::new(load_meta_models());
+        let workers = (0..pool.current_num_threads())
+            .map(|_| Mutex::new(Worker::new(&models)))
+            .collect();
 
         Ok(MetaPredictor {
             pool,
             models,
             config,
+            workers,
         })
     }
 
@@ -110,27 +115,21 @@ impl MetaPredictor {
             validate_sequence(seq.as_ref())?;
         }
 
-        let models = Arc::clone(&self.models);
-        self.pool.install(move || {
+        self.pool.install(|| {
             seqs.par_iter()
-                .map_init(
-                    || Worker::new(&models),
-                    |worker, seq| {
-                        predict_parallel(
-                            seq.as_ref(),
-                            &mut worker.models,
-                            &self.config,
-                            &mut worker.buf,
-                        )
-                    },
-                )
+                .map(|seq| {
+                    let slot = rayon::current_thread_index().unwrap_or(0) % self.workers.len();
+                    let mut worker = self.workers[slot].lock().unwrap();
+                    let Worker { buf, models } = &mut *worker;
+                    predict_parallel(seq.as_ref(), models, &self.config, buf)
+                })
                 .collect()
         })
     }
 }
 
-/// Per-thread state. Each worker owns its own copy of the 50 models so the scoring path can
-/// take them by mutable reference without copying one per candidate.
+/// Per-thread state, built once for the predictor. Each worker owns its own copy of the 50
+/// models so the scoring path can take them by mutable reference, and one copy is 28 MB.
 struct Worker {
     buf: SequenceBuffer,
     models: Vec<Box<Training>>,

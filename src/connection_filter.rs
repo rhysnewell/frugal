@@ -1,6 +1,5 @@
-// `score_connection` opens with six tests that reject two thirds of the pairs, and all six read
-// only three fields of the left node and two of the right. It writes only to the right node, so
-// the left ones hold still for a whole pass and their three fields pack into one byte.
+// Six tests reject two thirds of the pairs from three fields of the left node and two of the
+// right, and the left nodes hold still for a whole pass, so their three fields pack into a byte.
 
 use crate::types::{Node, STOP};
 

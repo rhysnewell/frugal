@@ -18,9 +18,10 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 *******************************************************************************/
 
-use crate::types::{Node, Training, MAX_NODE_DIST, MAX_OPP_OVLP, STOP};
+use crate::types::{Node, Training, MAX_NODE_DIST, STOP};
 use std::os::raw::c_int;
 
+use crate::connection::{backward_start, backward_stop, forward_start, forward_stop};
 use crate::connection_filter::{allowed_for, class_of};
 use crate::node::intergenic_mod;
 
@@ -80,13 +81,24 @@ pub unsafe fn dprog(nod: *mut Node, nn: c_int, tinf: *mut Training, flag: c_int)
         } else {
             min -= MAX_NODE_DIST;
         }
-        let table = allowed_for(nod.offset(i as isize));
-        for j in min..i {
-            if *table.get_unchecked(*classes.get_unchecked(j as usize) as usize) != 0 {
-                score_connection(nod, j, i, tinf, flag);
-            }
+        let n2: *mut Node = nod.offset(i as isize);
+        let table = allowed_for(n2);
+        macro_rules! pass {
+            ($scorer:path) => {
+                for j in min..i {
+                    if *table.get_unchecked(*classes.get_unchecked(j as usize) as usize) != 0 {
+                        $scorer(nod, j, n2, tinf, flag);
+                    }
+                }
+            };
         }
-        classes[i as usize] = class_of(nod.offset(i as isize));
+        match 2 * u8::from((*n2).strand != 1) + u8::from((*n2).type_ == STOP) {
+            0 => pass!(forward_start),
+            1 => pass!(forward_stop),
+            2 => pass!(backward_start),
+            _ => pass!(backward_stop),
+        }
+        classes[i as usize] = class_of(n2);
     }
     for i in (0..nn).rev() {
         if (*nod.offset(i as isize)).strand == 1 && (*nod.offset(i as isize)).type_ != STOP {
@@ -178,286 +190,6 @@ pub unsafe fn dprog(nod: *mut Node, nn: c_int, tinf: *mut Training, flag: c_int)
         return -1;
     } else {
         return max_ndx;
-    }
-}
-
-/// This routine scores the connection between two nodes, the most basic of which
-/// is 5'fwd->3'fwd (gene) and 3'rev->5'rev (rev gene).  If the connection ending
-/// at `n2` is the maximal scoring model, it updates the pointers in the dynamic
-/// programming model.  `n3` is used to handle overlaps, i.e. cases where 5->3'
-/// overlaps 5'->3' on the same strand.  In this case, 3' connects directly to 3',
-/// and `n3` is used to untangle the 5' end of the second gene.
-#[inline(always)]
-pub unsafe fn score_connection(
-    nod: *mut Node,
-    p1: c_int,
-    p2: c_int,
-    tinf: *mut Training,
-    flag: c_int,
-) {
-    let n1: *mut Node = &mut *nod.offset(p1 as isize);
-    let n2: *mut Node = &mut *nod.offset(p2 as isize);
-    let mut n3: *mut Node;
-    let mut left: c_int = (*n1).ndx;
-    let mut right: c_int = (*n2).ndx;
-    let bnd: c_int;
-    let mut ovlp: c_int = 0;
-    let mut maxfr: c_int = -1;
-    let mut score: f64 = 0.0;
-    let mut scr_mod: f64 = 0.0;
-    let mut maxval: f64;
-
-    /***********************/
-    /* Invalid Connections */
-    /***********************/
-
-    /* 5'fwd->5'fwd, 5'rev->5'rev */
-    if (*n1).type_ != STOP && (*n2).type_ != STOP && (*n1).strand == (*n2).strand {
-        return;
-    }
-    /* 5'fwd->5'rev, 5'fwd->3'rev */
-    else if (*n1).strand == 1 && (*n1).type_ != STOP && (*n2).strand == -1 {
-        return;
-    }
-    /* 3'rev->5'fwd, 3'rev->3'fwd) */
-    else if (*n1).strand == -1 && (*n1).type_ == STOP && (*n2).strand == 1 {
-        return;
-    }
-    /* 5'rev->3'fwd */
-    else if (*n1).strand == -1 && (*n1).type_ != STOP && (*n2).strand == 1 && (*n2).type_ == STOP
-    {
-        return;
-    }
-
-    /******************/
-    /* Edge Artifacts */
-    /******************/
-    if (*n1).traceb == -1 && (*n1).strand == 1 && (*n1).type_ == STOP {
-        return;
-    }
-    if (*n1).traceb == -1 && (*n1).strand == -1 && (*n1).type_ != STOP {
-        return;
-    }
-    /*********/
-    /* Genes */
-    /*********/
-
-    /* 5'fwd->3'fwd */
-    else if (*n1).strand == (*n2).strand
-        && (*n1).strand == 1
-        && (*n1).type_ != STOP
-        && (*n2).type_ == STOP
-    {
-        if (*n2).stop_val >= (*n1).ndx {
-            return;
-        }
-        if (*n1).ndx % 3 != (*n2).ndx % 3 {
-            return;
-        }
-        right += 2;
-        if flag == 0 {
-            scr_mod = (*tinf).bias[0] * (*n1).gc_score[0]
-                + (*tinf).bias[1] * (*n1).gc_score[1]
-                + (*tinf).bias[2] * (*n1).gc_score[2];
-        } else if flag == 1 {
-            score = (*n1).cscore + (*n1).sscore;
-        }
-    }
-    /* 3'rev->5'rev */
-    else if (*n1).strand == (*n2).strand
-        && (*n1).strand == -1
-        && (*n1).type_ == STOP
-        && (*n2).type_ != STOP
-    {
-        if (*n1).stop_val <= (*n2).ndx {
-            return;
-        }
-        if (*n1).ndx % 3 != (*n2).ndx % 3 {
-            return;
-        }
-        left -= 2;
-        if flag == 0 {
-            scr_mod = (*tinf).bias[0] * (*n2).gc_score[0]
-                + (*tinf).bias[1] * (*n2).gc_score[1]
-                + (*tinf).bias[2] * (*n2).gc_score[2];
-        } else if flag == 1 {
-            score = (*n2).cscore + (*n2).sscore;
-        }
-    }
-    /********************************/
-    /* Intergenic Space (Noncoding) */
-    /********************************/
-
-    /* 3'fwd->5'fwd */
-    else if (*n1).strand == 1 && (*n1).type_ == STOP && (*n2).strand == 1 && (*n2).type_ != STOP {
-        left += 2;
-        if left >= right {
-            return;
-        }
-        if flag == 1 {
-            score = intergenic_mod(n1, n2, tinf);
-        }
-    }
-    /* 3'fwd->3'rev */
-    else if (*n1).strand == 1 && (*n1).type_ == STOP && (*n2).strand == -1 && (*n2).type_ == STOP
-    {
-        left += 2;
-        right -= 2;
-        if left >= right {
-            return;
-        }
-        /* Overlapping Gene Case 2: Three consecutive overlapping genes f r r */
-        maxfr = -1;
-        maxval = 0.0;
-        for i in 0..3 {
-            if (*n2).star_ptr[i as usize] == -1 {
-                continue;
-            }
-            n3 = &mut *nod.offset((*n2).star_ptr[i as usize] as isize);
-            ovlp = left - (*n3).stop_val + 3;
-            if ovlp <= 0 || ovlp >= MAX_OPP_OVLP {
-                continue;
-            }
-            if ovlp >= (*n3).ndx - left {
-                continue;
-            }
-            if (*n1).traceb == -1 {
-                continue;
-            }
-            if ovlp >= (*n3).stop_val - (*nod.offset((*n1).traceb as isize)).ndx - 2 {
-                continue;
-            }
-            if (flag == 1 && (*n3).cscore + (*n3).sscore + intergenic_mod(n3, n2, tinf) > maxval)
-                || (flag == 0
-                    && (*tinf).bias[0] * (*n3).gc_score[0]
-                        + (*tinf).bias[1] * (*n3).gc_score[1]
-                        + (*tinf).bias[2] * (*n3).gc_score[2]
-                        > maxval)
-            {
-                maxfr = i;
-                maxval = (*n3).cscore + (*n3).sscore + intergenic_mod(n3, n2, tinf);
-            }
-        }
-        if maxfr != -1 {
-            n3 = &mut *nod.offset((*n2).star_ptr[maxfr as usize] as isize);
-            if flag == 0 {
-                scr_mod = (*tinf).bias[0] * (*n3).gc_score[0]
-                    + (*tinf).bias[1] * (*n3).gc_score[1]
-                    + (*tinf).bias[2] * (*n3).gc_score[2];
-            } else if flag == 1 {
-                score = (*n3).cscore + (*n3).sscore + intergenic_mod(n3, n2, tinf);
-            }
-        } else if flag == 1 {
-            score = intergenic_mod(n1, n2, tinf);
-        }
-    }
-    /* 5'rev->3'rev */
-    else if (*n1).strand == -1 && (*n1).type_ != STOP && (*n2).strand == -1 && (*n2).type_ == STOP
-    {
-        right -= 2;
-        if left >= right {
-            return;
-        }
-        if flag == 1 {
-            score = intergenic_mod(n1, n2, tinf);
-        }
-    }
-    /* 5'rev->5'fwd */
-    else if (*n1).strand == -1 && (*n1).type_ != STOP && (*n2).strand == 1 && (*n2).type_ != STOP
-    {
-        if left >= right {
-            return;
-        }
-        if flag == 1 {
-            score = intergenic_mod(n1, n2, tinf);
-        }
-    }
-    /********************/
-    /* Possible Operons */
-    /********************/
-
-    /* 3'fwd->3'fwd, check for a start just to left of first 3' */
-    else if (*n1).strand == 1 && (*n2).strand == 1 && (*n1).type_ == STOP && (*n2).type_ == STOP {
-        if (*n2).stop_val >= (*n1).ndx {
-            return;
-        }
-        if (*n1).star_ptr[((*n2).ndx % 3) as usize] == -1 {
-            return;
-        }
-        n3 = &mut *nod.offset((*n1).star_ptr[((*n2).ndx % 3) as usize] as isize);
-        left = (*n3).ndx;
-        right += 2;
-        if flag == 0 {
-            scr_mod = (*tinf).bias[0] * (*n3).gc_score[0]
-                + (*tinf).bias[1] * (*n3).gc_score[1]
-                + (*tinf).bias[2] * (*n3).gc_score[2];
-        } else if flag == 1 {
-            score = (*n3).cscore + (*n3).sscore + intergenic_mod(n1, n3, tinf);
-        }
-    }
-    /* 3'rev->3'rev, check for a start just to right of second 3' */
-    else if (*n1).strand == -1 && (*n1).type_ == STOP && (*n2).strand == -1 && (*n2).type_ == STOP
-    {
-        if (*n1).stop_val <= (*n2).ndx {
-            return;
-        }
-        if (*n2).star_ptr[((*n1).ndx % 3) as usize] == -1 {
-            return;
-        }
-        n3 = &mut *nod.offset((*n2).star_ptr[((*n1).ndx % 3) as usize] as isize);
-        left -= 2;
-        right = (*n3).ndx;
-        if flag == 0 {
-            scr_mod = (*tinf).bias[0] * (*n3).gc_score[0]
-                + (*tinf).bias[1] * (*n3).gc_score[1]
-                + (*tinf).bias[2] * (*n3).gc_score[2];
-        } else if flag == 1 {
-            score = (*n3).cscore + (*n3).sscore + intergenic_mod(n3, n2, tinf);
-        }
-    }
-    /***************************************/
-    /* Overlapping Opposite Strand 3' Ends */
-    /***************************************/
-
-    /* 3'for->5'rev */
-    else if (*n1).strand == 1 && (*n1).type_ == STOP && (*n2).strand == -1 && (*n2).type_ != STOP
-    {
-        if (*n2).stop_val - 2 >= (*n1).ndx + 2 {
-            return;
-        }
-        ovlp = ((*n1).ndx + 2) - ((*n2).stop_val - 2) + 1;
-        if ovlp >= MAX_OPP_OVLP {
-            return;
-        }
-        if ((*n1).ndx + 2 - (*n2).stop_val - 2 + 1) >= ((*n2).ndx - (*n1).ndx + 3 + 1) {
-            return;
-        }
-        if (*n1).traceb == -1 {
-            bnd = 0;
-        } else {
-            bnd = (*nod.offset((*n1).traceb as isize)).ndx;
-        }
-        if ((*n1).ndx + 2 - (*n2).stop_val - 2 + 1) >= ((*n2).stop_val - 3 - bnd + 1) {
-            return;
-        }
-        left = (*n2).stop_val - 2;
-        if flag == 0 {
-            scr_mod = (*tinf).bias[0] * (*n2).gc_score[0]
-                + (*tinf).bias[1] * (*n2).gc_score[1]
-                + (*tinf).bias[2] * (*n2).gc_score[2];
-        } else if flag == 1 {
-            score = (*n2).cscore + (*n2).sscore - 0.15 * (*tinf).st_wt;
-        }
-    }
-
-    if flag == 0 {
-        score = ((right - left + 1 - (ovlp * 2)) as f64) * scr_mod;
-    }
-
-    if (*n1).score + score >= (*n2).score {
-        (*n2).score = (*n1).score + score;
-        (*n2).traceb = p1;
-        (*n2).ov_mark = maxfr;
     }
 }
 

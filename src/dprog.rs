@@ -26,10 +26,8 @@ use crate::connection_filter::{allowed_for, class_of};
 use crate::node::intergenic_mod;
 
 
-/// Basic dynamic programming routine for predicting genes.  The `flag` variable
-/// is set to 0 for the initial dynamic programming routine based solely on GC
-/// frame plot (used to construct a training set).  If the flag is set to 1, the
-/// routine does the final dynamic programming based on coding, RBS scores, etc.
+/// `flag` 0 scores on the GC frame plot alone, to build a training set; 1 scores on coding and
+/// RBS for the final call.
 pub unsafe fn dprog(nod: *mut Node, nn: c_int, tinf: *mut Training, flag: c_int) -> c_int {
     let mut min: c_int;
     let mut max_ndx: c_int = -1;

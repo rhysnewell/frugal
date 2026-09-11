@@ -5,7 +5,7 @@
 
 use std::alloc::{alloc_zeroed, handle_alloc_error, Layout};
 use std::os::raw::c_int;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use rayon::prelude::*;
 use rayon::ThreadPool;
@@ -13,7 +13,7 @@ use rayon::ThreadPool;
 use super::convert::gene_to_predicted;
 use super::encode::SequenceBuffer;
 use super::types::{PredictedGene, ProdigalConfig, ProdigalError};
-use crate::types::{Gene, Training, MAX_SEQ, NUM_META};
+use crate::types::{Gene, Node, Training, MAX_SEQ, NUM_META};
 
 use super::predict::validate_config;
 
@@ -38,7 +38,6 @@ pub struct MetaPredictor {
     pool: Arc<ThreadPool>,
     models: Arc<Vec<Box<Training>>>,
     config: ProdigalConfig,
-    workers: Vec<Mutex<Worker>>,
 }
 
 impl MetaPredictor {
@@ -84,15 +83,11 @@ impl MetaPredictor {
     ) -> Result<Self, ProdigalError> {
         validate_config(&config)?;
         let models = Arc::new(load_meta_models());
-        let workers = (0..pool.current_num_threads())
-            .map(|_| Mutex::new(Worker::new(&models)))
-            .collect();
 
         Ok(MetaPredictor {
             pool,
             models,
             config,
-            workers,
         })
     }
 
@@ -101,8 +96,8 @@ impl MetaPredictor {
         validate_sequence(seq)?;
 
         self.pool.install(|| {
-            let mut worker = Worker::new(&self.models);
-            predict_parallel(seq, &mut worker.models, &self.config, &mut worker.buf)
+            let mut buf = SequenceBuffer::reusable();
+            predict_parallel(seq, &self.models, &self.config, &mut buf)
         })
     }
 
@@ -117,30 +112,11 @@ impl MetaPredictor {
 
         self.pool.install(|| {
             seqs.par_iter()
-                .map(|seq| {
-                    let slot = rayon::current_thread_index().unwrap_or(0) % self.workers.len();
-                    let mut worker = self.workers[slot].lock().unwrap();
-                    let Worker { buf, models } = &mut *worker;
-                    predict_parallel(seq.as_ref(), models, &self.config, buf)
+                .map_init(SequenceBuffer::reusable, |buf, seq| {
+                    predict_parallel(seq.as_ref(), &self.models, &self.config, buf)
                 })
                 .collect()
         })
-    }
-}
-
-/// Per-thread state, built once for the predictor. Each worker owns its own copy of the 50
-/// models so the scoring path can take them by mutable reference, and one copy is 28 MB.
-struct Worker {
-    buf: SequenceBuffer,
-    models: Vec<Box<Training>>,
-}
-
-impl Worker {
-    fn new(models: &[Box<Training>]) -> Self {
-        Worker {
-            buf: SequenceBuffer::reusable(),
-            models: models.to_vec(),
-        }
     }
 }
 
@@ -183,7 +159,7 @@ struct NodeState {
 
 unsafe fn prepare_nodes(
     buf: &mut SequenceBuffer,
-    tinf: &mut Training,
+    tinf: &Training,
     slen: c_int,
     closed: c_int,
     state: &mut NodeState,
@@ -224,9 +200,90 @@ unsafe fn prepare_nodes(
     }
 }
 
+
+/// A long contig is one indivisible unit of work to `predict_batch`, so with one left the box
+/// runs a single core. Splitting its models is the only parallelism available at that point.
+const MODEL_SPLIT_BASES: c_int = 100_000;
+
+struct Scored {
+    model: usize,
+    score: f64,
+    ipath: c_int,
+    nodes: Vec<Node>,
+}
+
+/// Read-only for the length of a scoring pass, and raw because it crosses into the C port.
+struct Shared {
+    seq: *mut u8,
+    rseq: *mut u8,
+    masks: *const u32,
+}
+
+unsafe impl Send for Shared {}
+unsafe impl Sync for Shared {}
+
+/// The serial loop keeps the first model to reach a score, so a tie falls to the lower index.
+fn better(a: Scored, b: Scored) -> Scored {
+    match b.score > a.score || (b.score == a.score && b.model < a.model) {
+        true => b,
+        false => a,
+    }
+}
+
+unsafe fn score_against(
+    shared: &Shared,
+    slen: c_int,
+    nodes: &mut [Node],
+    nn: c_int,
+    tinf: &Training,
+    closed: c_int,
+) -> (f64, c_int) {
+    reset_node_scores(nodes.as_mut_ptr(), nn);
+    score_nodes_with_rbs(
+        shared.seq,
+        shared.rseq,
+        slen,
+        nodes.as_mut_ptr(),
+        nn,
+        tinf,
+        closed,
+        1,
+        shared.masks,
+    );
+    record_overlapping_starts(nodes.as_mut_ptr(), nn, tinf, 1);
+    let ipath = dprog(nodes.as_mut_ptr(), nn, tinf, 1);
+    let score = match ipath >= 0 && ipath < nn {
+        true => nodes[ipath as usize].score,
+        false => f64::NEG_INFINITY,
+    };
+    (score, ipath)
+}
+
+unsafe fn adopt(
+    entry: &mut Scored,
+    tinf: &Training,
+    genes: &mut [Gene],
+    best_genes: &mut Vec<Gene>,
+    best_nodes: &mut Vec<Node>,
+    nn: c_int,
+) {
+    eliminate_bad_genes(entry.nodes.as_mut_ptr(), entry.ipath, tinf);
+    let ng = add_genes(genes.as_mut_ptr(), entry.nodes.as_mut_ptr(), entry.ipath);
+    tweak_final_starts(genes.as_mut_ptr(), ng, entry.nodes.as_mut_ptr(), nn, tinf);
+    let kept = (ng.max(0) as usize).min(genes.len());
+    best_genes.clear();
+    best_genes.extend_from_slice(&genes[..kept]);
+    let dirty = (kept + 1).min(genes.len());
+    for gene in &mut genes[..dirty] {
+        *gene = std::mem::zeroed();
+    }
+    best_nodes.clear();
+    best_nodes.append(&mut entry.nodes);
+}
+
 fn predict_parallel(
     seq: &[u8],
-    models: &mut [Box<Training>],
+    models: &[Box<Training>],
     config: &ProdigalConfig,
     buf: &mut SequenceBuffer,
 ) -> Result<Vec<PredictedGene>, ProdigalError> {
@@ -265,7 +322,7 @@ fn predict_parallel(
         if config.model_depth > 0 && chosen.len() > config.model_depth {
             let mut ranked: Vec<(usize, f64)> = Vec::with_capacity(chosen.len());
             for i in &chosen {
-                let tinf: &mut Training = &mut models[*i];
+                let tinf: &Training = &models[*i];
                 let rbs_masks = prepare_nodes(buf, tinf, slen, closed, &mut state);
                 reset_node_scores(buf.nodes.as_mut_ptr(), state.nn);
                 score_nodes_with_rbs(
@@ -291,51 +348,109 @@ fn predict_parallel(
             chosen.sort_unstable();
         }
 
-        for i in &chosen {
-            let tinf: &mut Training = &mut models[*i];
-            let rbs_masks = prepare_nodes(buf, tinf, slen, closed, &mut state);
-            reset_node_scores(buf.nodes.as_mut_ptr(), state.nn);
-            score_nodes_with_rbs(
-                buf.seq.as_mut_ptr(),
-                buf.rseq.as_mut_ptr(),
-                slen,
-                buf.nodes.as_mut_ptr(),
-                state.nn,
-                tinf,
-                closed,
-                1,
-                rbs_masks,
-            );
-            record_overlapping_starts(buf.nodes.as_mut_ptr(), state.nn, tinf, 1);
-            let ipath = dprog(buf.nodes.as_mut_ptr(), state.nn, tinf, 1);
-            if ipath < 0 || ipath >= state.nn {
-                continue;
+        if slen < MODEL_SPLIT_BASES || chosen.len() < 2 {
+            for i in &chosen {
+                let tinf: &Training = &models[*i];
+                let masks = prepare_nodes(buf, tinf, slen, closed, &mut state);
+                let nn = state.nn;
+                let shared = Shared {
+                    seq: buf.seq.as_mut_ptr(),
+                    rseq: buf.rseq.as_mut_ptr(),
+                    masks,
+                };
+                let mut nodes = std::mem::take(&mut buf.nodes);
+                let (score, ipath) = score_against(&shared, slen, &mut nodes, nn, tinf, closed);
+                buf.nodes = nodes;
+                if ipath < 0 || ipath >= nn || score <= best_score {
+                    continue;
+                }
+                best_score = score;
+                best_tinf = Some(*i);
+                let mut entry = Scored {
+                    model: *i,
+                    score,
+                    ipath,
+                    nodes: buf.nodes[..nn as usize].to_vec(),
+                };
+                adopt(&mut entry, tinf, &mut buf.genes, &mut best_genes, &mut best_nodes, nn);
+            }
+        } else {
+            let mut plan: Vec<(usize, usize, bool)> = Vec::with_capacity(chosen.len());
+            let mut generation = 0usize;
+            let mut table = state.built_table;
+            let mut fresh = state.masks_fresh;
+            for i in &chosen {
+                if table != Some(models[*i].trans_table) {
+                    table = Some(models[*i].trans_table);
+                    fresh = false;
+                    generation += 1;
+                }
+                fresh |= models[*i].uses_sd == 1;
+                plan.push((*i, generation, fresh));
             }
 
-            let score = buf.nodes[ipath as usize].score;
-            if score > best_score {
-                best_score = score;
-                eliminate_bad_genes(buf.nodes.as_mut_ptr(), ipath, tinf);
-
-                let ng = add_genes(buf.genes.as_mut_ptr(), buf.nodes.as_mut_ptr(), ipath);
-                tweak_final_starts(
-                    buf.genes.as_mut_ptr(),
-                    ng,
-                    buf.nodes.as_mut_ptr(),
-                    state.nn,
-                    tinf,
-                );
-                let kept = (ng.max(0) as usize).min(buf.genes.len());
-                best_genes.clear();
-                best_genes.extend_from_slice(&buf.genes[..kept]);
-                let dirty = (kept + 1).min(buf.genes.len());
-                for gene in &mut buf.genes[..dirty] {
-                    *gene = std::mem::zeroed();
+            let mut at = 0;
+            while at < plan.len() {
+                let mut upto = at;
+                while upto < plan.len() && plan[upto].1 == plan[at].1 {
+                    upto += 1;
                 }
-
-                best_nodes.clear();
-                best_nodes.extend_from_slice(&buf.nodes[..state.nn as usize]);
-                best_tinf = Some(*i);
+                let group = &plan[at..upto];
+                for (i, _, _) in group {
+                    prepare_nodes(buf, &models[*i], slen, closed, &mut state);
+                }
+                let nn = state.nn;
+                let with_masks = Shared {
+                    seq: buf.seq.as_mut_ptr(),
+                    rseq: buf.rseq.as_mut_ptr(),
+                    masks: buf.rbs_masks.as_ptr(),
+                };
+                let bare = Shared {
+                    seq: buf.seq.as_mut_ptr(),
+                    rseq: buf.rseq.as_mut_ptr(),
+                    masks: std::ptr::null(),
+                };
+                let base = &buf.nodes[..nn as usize];
+                let winner = group
+                    .par_iter()
+                    .fold(
+                        || None::<Scored>,
+                        |held, (i, _, masks)| {
+                            let shared = match masks {
+                                true => &with_masks,
+                                false => &bare,
+                            };
+                            let mut nodes = base.to_vec();
+                            let (score, ipath) =
+                                score_against(shared, slen, &mut nodes, nn, &models[*i], closed);
+                            match ipath >= 0 && ipath < nn {
+                                false => held,
+                                true => {
+                                    let found = Scored { model: *i, score, ipath, nodes };
+                                    Some(match held {
+                                        Some(held) => better(held, found),
+                                        None => found,
+                                    })
+                                }
+                            }
+                        },
+                    )
+                    .reduce(
+                        || None::<Scored>,
+                        |a, b| match (a, b) {
+                            (Some(a), Some(b)) => Some(better(a, b)),
+                            (held, None) | (None, held) => held,
+                        },
+                    );
+                if let Some(mut entry) = winner {
+                    if entry.score > best_score {
+                        best_score = entry.score;
+                        best_tinf = Some(entry.model);
+                        let tinf: &Training = &models[entry.model];
+                        adopt(&mut entry, tinf, &mut buf.genes, &mut best_genes, &mut best_nodes, nn);
+                    }
+                }
+                at = upto;
             }
         }
     }
@@ -345,7 +460,7 @@ fn predict_parallel(
     let Some(best) = best_tinf else {
         return Ok(Vec::new());
     };
-    let tinf: &mut Training = &mut models[best];
+    let tinf: &Training = &models[best];
 
     unsafe {
         record_gene_data(

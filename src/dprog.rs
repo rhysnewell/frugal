@@ -28,7 +28,7 @@ use crate::node::intergenic_mod;
 
 /// `flag` 0 scores on the GC frame plot alone, to build a training set; 1 scores on coding and
 /// RBS for the final call.
-pub unsafe fn dprog(nod: *mut Node, nn: c_int, tinf: *mut Training, flag: c_int) -> c_int {
+pub unsafe fn dprog(nod: *mut Node, nn: c_int, tinf: *const Training, flag: c_int) -> c_int {
     let mut min: c_int;
     let mut max_ndx: c_int = -1;
     let mut max_sc: f64 = -1.0;
@@ -194,7 +194,7 @@ pub unsafe fn dprog(nod: *mut Node, nn: c_int, tinf: *mut Training, flag: c_int)
 /// Sometimes bad genes creep into the model due to the node distance constraint
 /// in the dynamic programming routine.  This routine just does a sweep through
 /// the genes and eliminates ones with negative scores.
-pub unsafe fn eliminate_bad_genes(nod: *mut Node, dbeg: c_int, tinf: *mut Training) {
+pub unsafe fn eliminate_bad_genes(nod: *mut Node, dbeg: c_int, tinf: *const Training) {
     let mut path: c_int;
 
     if dbeg == -1 {

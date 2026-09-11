@@ -489,7 +489,7 @@ pub unsafe fn is_n(useq: *mut u8, n: c_int) -> c_int {
 /// Returns 1 if the codon at position `n` is a stop codon for the translation
 /// table specified in `tinf`, else 0.
 #[inline]
-pub unsafe fn is_stop(seq: *mut u8, n: c_int, tinf: *mut Training) -> c_int {
+pub unsafe fn is_stop(seq: *mut u8, n: c_int, tinf: *const Training) -> c_int {
     let tt = (*tinf).trans_table;
 
     /* TAG */
@@ -548,7 +548,7 @@ pub unsafe fn is_stop(seq: *mut u8, n: c_int, tinf: *mut Training) -> c_int {
 /// (ATG/GTG/TTG, gated by the translation table in `tinf`), else 0. Other
 /// initiation codons are not handled.
 #[inline]
-pub unsafe fn is_start(seq: *mut u8, n: c_int, tinf: *mut Training) -> c_int {
+pub unsafe fn is_start(seq: *mut u8, n: c_int, tinf: *const Training) -> c_int {
     let tt = (*tinf).trans_table;
 
     /* ATG */
@@ -637,7 +637,7 @@ pub unsafe fn gc_content(seq: *mut u8, a: c_int, b: c_int) -> c_double {
 /// respecting the translation table in `tinf`. If `is_init` is set, recognized
 /// start codons are translated as `M`. Stop codons return `*`, and unknown
 /// codons return `X`.
-pub unsafe fn amino(seq: *mut u8, n: c_int, tinf: *mut Training, is_init: c_int) -> c_char {
+pub unsafe fn amino(seq: *mut u8, n: c_int, tinf: *const Training, is_init: c_int) -> c_char {
     let tt = (*tinf).trans_table;
 
     if is_stop(seq, n, tinf) == 1 {

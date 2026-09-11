@@ -5,7 +5,7 @@ use crate::types::{Node, Training, MAX_OPP_OVLP, OPER_DIST, STOP};
 use std::os::raw::c_int;
 
 #[inline(always)]
-unsafe fn intergenic_mod_same(n1: *mut Node, n2: *mut Node, tinf: *mut Training) -> f64 {
+unsafe fn intergenic_mod_same(n1: *mut Node, n2: *mut Node, tinf: *const Training) -> f64 {
     let mut rval: f64 = 0.0;
 
     if (*n1).ndx + 2 == (*n2).ndx || (*n1).ndx - 1 == (*n2).ndx {
@@ -40,12 +40,12 @@ unsafe fn intergenic_mod_same(n1: *mut Node, n2: *mut Node, tinf: *mut Training)
 }
 
 #[inline(always)]
-unsafe fn intergenic_mod_diff(tinf: *mut Training) -> f64 {
+unsafe fn intergenic_mod_diff(tinf: *const Training) -> f64 {
     -0.15 * (*tinf).st_wt
 }
 
 #[inline(always)]
-unsafe fn frame_bias(node: *mut Node, tinf: *mut Training) -> f64 {
+unsafe fn frame_bias(node: *mut Node, tinf: *const Training) -> f64 {
     (*tinf).bias[0] * (*node).gc_score[0]
         + (*tinf).bias[1] * (*node).gc_score[1]
         + (*tinf).bias[2] * (*node).gc_score[2]
@@ -65,7 +65,7 @@ pub unsafe fn forward_start(
     nod: *mut Node,
     p1: c_int,
     n2: *mut Node,
-    tinf: *mut Training,
+    tinf: *const Training,
     flag: c_int,
 ) {
     let n1: *mut Node = nod.offset(p1 as isize);
@@ -97,7 +97,7 @@ pub unsafe fn forward_stop(
     nod: *mut Node,
     p1: c_int,
     n2: *mut Node,
-    tinf: *mut Training,
+    tinf: *const Training,
     flag: c_int,
 ) {
     let n1: *mut Node = nod.offset(p1 as isize);
@@ -144,7 +144,7 @@ pub unsafe fn backward_start(
     nod: *mut Node,
     p1: c_int,
     n2: *mut Node,
-    tinf: *mut Training,
+    tinf: *const Training,
     flag: c_int,
 ) {
     let n1: *mut Node = nod.offset(p1 as isize);
@@ -204,7 +204,7 @@ pub unsafe fn backward_stop(
     nod: *mut Node,
     p1: c_int,
     n2: *mut Node,
-    tinf: *mut Training,
+    tinf: *const Training,
     flag: c_int,
 ) {
     let n1: *mut Node = nod.offset(p1 as isize);

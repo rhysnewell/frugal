@@ -128,7 +128,7 @@ pub unsafe fn tweak_final_starts(
     ng: c_int,
     nod: *mut Node,
     nn: c_int,
-    tinf: *mut Training,
+    tinf: *const Training,
 ) {
     let mut maxndx: [c_int; 2];
     let mut maxsc: [f64; 2];
@@ -351,7 +351,7 @@ pub unsafe fn record_gene_data(
     genes: *mut Gene,
     ng: c_int,
     nod: *mut Node,
-    tinf: *mut Training,
+    tinf: *const Training,
     sctr: c_int,
 ) {
     // SD motif string tables
@@ -501,7 +501,7 @@ pub unsafe fn print_genes(
     sctr: c_int,
     is_meta: c_int,
     mdesc: *mut c_char,
-    tinf: *mut Training,
+    tinf: *const Training,
     header: *mut c_char,
     short_hdr: *mut c_char,
     version: *mut c_char,
@@ -682,7 +682,7 @@ pub unsafe fn write_translations(
     rseq: *mut u8,
     useq: *mut u8,
     slen: c_int,
-    tinf: *mut Training,
+    tinf: *const Training,
     _sctr: c_int,
     short_hdr: *mut c_char,
 ) {
@@ -768,7 +768,7 @@ pub unsafe fn write_nucleotide_seqs(
     rseq: *mut u8,
     useq: *mut u8,
     slen: c_int,
-    _tinf: *mut Training,
+    _tinf: *const Training,
     _sctr: c_int,
     short_hdr: *mut c_char,
 ) {

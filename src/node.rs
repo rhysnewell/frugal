@@ -74,7 +74,7 @@ pub unsafe fn add_nodes(
     closed: c_int,
     mlist: *mut Mask,
     nm: c_int,
-    tinf: *mut Training,
+    tinf: *const Training,
 ) -> c_int {
     let mut nn: c_int = 0;
     let mut last: [c_int; 3] = [0; 3];
@@ -330,7 +330,7 @@ pub unsafe fn reset_node_scores(nod: *mut Node, nn: c_int) {
 pub unsafe fn record_overlapping_starts(
     nod: *mut Node,
     nn: c_int,
-    tinf: *mut Training,
+    tinf: *const Training,
     flag: c_int,
 ) {
     let mut max_sc: f64;
@@ -640,7 +640,7 @@ pub unsafe fn calc_dicodon_gene(
 /// defined in the original C source. Kept here only for link compatibility;
 /// performs no work.
 pub unsafe fn calc_amino_bg(
-    _tinf: *mut Training,
+    _tinf: *const Training,
     _seq: *mut u8,
     _rseq: *mut u8,
     _slen: c_int,
@@ -665,7 +665,7 @@ pub unsafe fn score_nodes(
     slen: c_int,
     nod: *mut Node,
     nn: c_int,
-    tinf: *mut Training,
+    tinf: *const Training,
     closed: c_int,
     is_meta: c_int,
 ) {
@@ -689,7 +689,7 @@ pub unsafe fn score_nodes_with_rbs(
     slen: c_int,
     nod: *mut Node,
     nn: c_int,
-    tinf: *mut Training,
+    tinf: *const Training,
     closed: c_int,
     is_meta: c_int,
     rbs_masks: *const u32,
@@ -914,7 +914,7 @@ pub unsafe fn calc_orf_gc(
     _slen: c_int,
     nod: *mut Node,
     nn: c_int,
-    _tinf: *mut Training,
+    _tinf: *const Training,
 ) {
     let mut last: [c_int; 3] = [0; 3];
     let mut gc: [f64; 3] = [0.0; 3];
@@ -990,7 +990,7 @@ pub unsafe fn raw_coding_score(
     slen: c_int,
     nod: *mut Node,
     nn: c_int,
-    tinf: *mut Training,
+    tinf: *const Training,
 ) {
     let mut last: [c_int; 3] = [0; 3];
     let mut score: [f64; 3] = [0.0; 3];
@@ -1249,7 +1249,7 @@ unsafe fn best_of_mask(mask: u32, rwt: *const f64) -> c_int {
     best
 }
 
-unsafe fn rbs_score_from_masks(nod: *mut Node, nn: c_int, tinf: *mut Training, masks: *const u32) {
+unsafe fn rbs_score_from_masks(nod: *mut Node, nn: c_int, tinf: *const Training, masks: *const u32) {
     let rwt = (*tinf).rbs_wt.as_ptr();
     for i in 0..nn {
         if (*nod.offset(i as isize)).type_ == STOP || (*nod.offset(i as isize)).edge == 1 {
@@ -1283,7 +1283,7 @@ pub unsafe fn rbs_score(
     slen: c_int,
     nod: *mut Node,
     nn: c_int,
-    tinf: *mut Training,
+    tinf: *const Training,
 ) {
     let mut cur_sc: [c_int; 2];
 
@@ -2104,7 +2104,7 @@ pub unsafe fn score_upstream_composition(
     seq: *mut u8,
     slen: c_int,
     nod: *mut Node,
-    tinf: *mut Training,
+    tinf: *const Training,
 ) {
     let mut count: usize = 0;
     let start: c_int;
@@ -2139,7 +2139,7 @@ pub unsafe fn score_upstream_composition(
 /// (`stage == 2`), only good scoring motifs are returned; otherwise a "no
 /// motif" placeholder is stored in `nod.mot`.
 pub unsafe fn find_best_upstream_motif(
-    tinf: *mut Training,
+    tinf: *const Training,
     seq: *mut u8,
     rseq: *mut u8,
     slen: c_int,
@@ -2434,7 +2434,7 @@ pub unsafe fn build_coverage_map(
 /// are close and a slight penalty when switching strands or having a large
 /// intergenic space.
 #[inline(always)]
-pub unsafe fn intergenic_mod(n1: *mut Node, n2: *mut Node, tinf: *mut Training) -> f64 {
+pub unsafe fn intergenic_mod(n1: *mut Node, n2: *mut Node, tinf: *const Training) -> f64 {
     let mut rval: f64 = 0.0;
     let mut ovlp: f64 = 0.0;
 
@@ -2486,7 +2486,7 @@ pub unsafe fn write_start_file(
     fh: c_int,
     nod: *mut Node,
     nn: c_int,
-    tinf: *mut Training,
+    tinf: *const Training,
     sctr: c_int,
     slen: c_int,
     is_meta: c_int,

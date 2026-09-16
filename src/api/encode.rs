@@ -1,3 +1,4 @@
+use std::alloc::{alloc_zeroed, handle_alloc_error, Layout};
 use std::os::raw::c_int;
 
 use crate::bitmap::set;
@@ -36,9 +37,9 @@ impl SequenceBuffer {
             seq: vec![0u8; seq_bytes],
             rseq: vec![0u8; seq_bytes],
             useq: vec![0u8; useq_bytes],
-            nodes: vec![unsafe { std::mem::zeroed() }; STT_NOD],
-            genes: vec![unsafe { std::mem::zeroed() }; MAX_GENES],
-            masks: vec![unsafe { std::mem::zeroed() }; MAX_MASKS],
+            nodes: zeroed_vec(STT_NOD),
+            genes: zeroed_vec(MAX_GENES),
+            masks: zeroed_vec(MAX_MASKS),
             rbs_masks: Vec::new(),
             nmask: 0,
             prev_len: 0,
@@ -266,7 +267,9 @@ impl SequenceBuffer {
     pub fn ensure_node_capacity(&mut self, slen: c_int) {
         let needed = (slen as usize) / 8;
         if needed > self.nodes.len() {
-            self.nodes.resize(needed, unsafe { std::mem::zeroed() });
+            let mut grown: Vec<Node> = zeroed_vec(needed);
+            grown[..self.nodes.len()].copy_from_slice(&self.nodes);
+            self.nodes = grown;
         }
     }
 
@@ -277,12 +280,25 @@ impl SequenceBuffer {
         }
     }
 
-    /// Clear node buffer.
     pub fn clear_nodes(&mut self, nn: c_int) {
         let dirty = (nn.max(0) as usize).max(self.prev_nn).min(self.nodes.len());
-        for i in 0..dirty {
-            self.nodes[i] = unsafe { std::mem::zeroed() };
-        }
+        unsafe { std::ptr::write_bytes(self.nodes.as_mut_ptr(), 0, dirty) };
         self.prev_nn = 0;
+    }
+}
+
+/// Cloning a zeroed 176 byte node a hundred thousand times per scratch buffer is a memset the
+/// allocator gives away: fresh pages come back zeroed already.
+fn zeroed_vec<T>(count: usize) -> Vec<T> {
+    if count == 0 {
+        return Vec::new();
+    }
+    let layout = Layout::array::<T>(count).expect("scratch buffer fits in memory");
+    unsafe {
+        let ptr = alloc_zeroed(layout) as *mut T;
+        if ptr.is_null() {
+            handle_alloc_error(layout);
+        }
+        Vec::from_raw_parts(ptr, count, count)
     }
 }

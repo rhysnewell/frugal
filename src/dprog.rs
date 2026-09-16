@@ -45,10 +45,9 @@ pub unsafe fn dprog(nod: *mut Node, nn: c_int, tinf: *const Training, flag: c_in
         (*nod.offset(i as isize)).tracef = -1;
     }
 
-    let mut classes = Vec::with_capacity(nn as usize);
-    for i in 0..nn {
-        classes.push(class_of(nod.offset(i as isize)));
-    }
+    // Only classes[j] for j below the current i is ever read, and iteration j writes it, so
+    // nothing here is observed before the loop sets it.
+    let mut classes = vec![0u8; nn as usize];
 
     for i in 0..nn {
         /* Set up distance constraints for making connections, */

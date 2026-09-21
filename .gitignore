@@ -1,6 +1,6 @@
 /target
 Cargo.lock
 *.o
-Prodigal/prodigal
+/Prodigal/
 tools/gen_training_data
 .claude/

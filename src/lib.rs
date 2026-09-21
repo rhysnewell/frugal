@@ -1,3 +1,4 @@
+#![allow(unsafe_op_in_unsafe_fn)]
 #![allow(
     clippy::assign_op_pattern,
     clippy::collapsible_else_if,

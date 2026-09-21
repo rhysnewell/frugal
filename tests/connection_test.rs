@@ -1,3 +1,5 @@
+#![allow(unsafe_op_in_unsafe_fn)]
+
 use frugal::connection::{backward_start, backward_stop, forward_start, forward_stop};
 use frugal::connection_filter::{allowed_for, class_of};
 use frugal::node::intergenic_mod;

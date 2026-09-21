@@ -1,3 +1,4 @@
+#![allow(unsafe_op_in_unsafe_fn)]
 #![allow(clippy::manual_range_contains, clippy::unnecessary_map_or)]
 
 use clap::Parser;

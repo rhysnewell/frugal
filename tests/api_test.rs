@@ -10,7 +10,7 @@ use frugal::{
 /// Read the sample FASTA and extract raw sequence bytes (stripping headers/newlines).
 fn load_sample_sequences() -> Vec<(String, Vec<u8>)> {
     let fasta = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Prodigal/anthus_aco.fas"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/anthus_aco.fas"),
     )
     .unwrap();
 

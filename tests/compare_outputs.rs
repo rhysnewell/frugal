@@ -1,8 +1,5 @@
-//! Integration tests that run both the original C prodigal binary and the Rust
-//! wrapper, then assert that all output files are byte-identical.
-//!
-//! Prerequisites: the C binary must be built at `Prodigal/prodigal` before
-//! running these tests (run `make` in the `Prodigal/` directory).
+#![cfg(feature = "compare-c")]
+//! Requires a C prodigal checkout built at `Prodigal/prodigal` beside the crate.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -29,7 +26,7 @@ fn rust_binary() -> PathBuf {
 
 /// Path to the sample FASTA input.
 fn sample_input() -> PathBuf {
-    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("Prodigal/anthus_aco.fas");
+    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/anthus_aco.fas");
     assert!(p.exists(), "Sample input not found at {}", p.display());
     p
 }

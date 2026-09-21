@@ -1,7 +1,5 @@
-//! Verify that Rust `#[repr(C)]` struct sizes match their C counterparts.
-//!
-//! This test compiles and runs a small C program that prints sizeof() for each
-//! struct, then compares against std::mem::size_of::<T>().
+#![cfg(feature = "compare-c")]
+//! Requires a C prodigal checkout at `Prodigal/` beside the crate and a C compiler.
 
 use std::process::Command;
 

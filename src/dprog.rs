@@ -110,6 +110,10 @@ pub unsafe fn dprog(nod: *mut Node, nn: c_int, tinf: *const Training, flag: c_in
         }
     }
 
+    if max_ndx == -1 {
+        return -1;
+    }
+
     /* First Pass: untangle the triple overlaps */
     path = max_ndx;
     while (*nod.offset(path as isize)).traceb != -1 {

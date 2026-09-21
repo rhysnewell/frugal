@@ -655,6 +655,7 @@ pub unsafe fn run_pipeline(config: &PipelineConfig) -> i32 {
             }
 
             max_score = -100.0;
+            ng = 0;
             for mi in 0..NUM_META as c_int {
                 if mi == 0 || meta_trans_table[mi as usize] != meta_trans_table[(mi - 1) as usize] {
                     meta_tinf.trans_table = meta_trans_table[mi as usize];
@@ -680,7 +681,7 @@ pub unsafe fn run_pipeline(config: &PipelineConfig) -> i32 {
                 score_nodes(seq, rseq, slen, nodes, nn, &mut meta_tinf, closed, is_meta);
                 record_overlapping_starts(nodes, nn, &mut meta_tinf, 1);
                 ipath = dprog(nodes, nn, &mut meta_tinf, 1);
-                if (*nodes.offset(ipath as isize)).score > max_score {
+                if ipath >= 0 && (*nodes.offset(ipath as isize)).score > max_score {
                     max_phase = mi;
                     max_score = (*nodes.offset(ipath as isize)).score;
                     eliminate_bad_genes(nodes, ipath, &mut meta_tinf);

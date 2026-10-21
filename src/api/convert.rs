@@ -98,7 +98,7 @@ pub(crate) unsafe fn gene_to_predicted(
             ("None", "None")
         } else {
             // Upstream motif: convert mer index to text
-            let mut qt = [0i8; 10];
+            let mut qt: [std::os::raw::c_char; 10] = [0; 10];
             mer_text(qt.as_mut_ptr(), n.mot.len, n.mot.ndx);
             let motif = std::ffi::CStr::from_ptr(qt.as_ptr())
                 .to_str()

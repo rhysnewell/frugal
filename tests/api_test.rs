@@ -830,3 +830,23 @@ fn test_genes_are_mostly_non_overlapping() {
         }
     }
 }
+
+// The predictor reads mers from per-strand tables and splits long contigs' models across
+// threads, so every field, scores included, is held to the reference path.
+#[test]
+fn the_meta_predictor_scores_every_gene_as_the_reference_path_does() {
+    let seqs = load_sample_sequences();
+    let long = seqs
+        .iter()
+        .flat_map(|(_, seq)| seq.iter().copied())
+        .cycle()
+        .take(120_000)
+        .collect::<Vec<u8>>();
+    let predictor = MetaPredictor::new().unwrap();
+    for seq in seqs.iter().map(|(_, seq)| seq.as_slice()).chain([long.as_slice()]) {
+        assert_eq!(
+            format!("{:?}", predictor.predict(seq).unwrap()),
+            format!("{:?}", predict_meta(seq).unwrap())
+        );
+    }
+}

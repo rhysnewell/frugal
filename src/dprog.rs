@@ -18,13 +18,12 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 *******************************************************************************/
 
-use crate::types::{Node, Training, MAX_NODE_DIST, STOP};
+use crate::types::{MAX_NODE_DIST, Node, STOP, Training};
 use std::os::raw::c_int;
 
 use crate::connection::{backward_start, backward_stop, forward_start, forward_stop};
-use crate::connection_filter::{allowed_for, class_of};
+use crate::connection_filter::{CLASSES, allowed_for, class_of};
 use crate::node::intergenic_mod;
-
 
 /// `flag` 0 scores on the GC frame plot alone, to build a training set; 1 scores on coding and
 /// RBS for the final call.
@@ -45,9 +44,10 @@ pub unsafe fn dprog(nod: *mut Node, nn: c_int, tinf: *const Training, flag: c_in
         (*nod.offset(i as isize)).tracef = -1;
     }
 
-    // Only classes[j] for j below the current i is ever read, and iteration j writes it, so
-    // nothing here is observed before the loop sets it.
-    let mut classes = vec![0u8; nn as usize];
+    // A bitset of node indices per class lets a pass visit only the allowed nodes, still in
+    // index order. Node j's bit is set once its own pass ends, so a pass sees only nodes below it.
+    let words = (nn as usize).div_ceil(64);
+    let mut members = vec![0u64; CLASSES * words];
 
     for i in 0..nn {
         /* Set up distance constraints for making connections, */
@@ -80,11 +80,23 @@ pub unsafe fn dprog(nod: *mut Node, nn: c_int, tinf: *const Training, flag: c_in
         }
         let n2: *mut Node = nod.offset(i as isize);
         let table = allowed_for(n2);
+        let first = min as usize >> 6;
         macro_rules! pass {
             ($scorer:path) => {
-                for j in min..i {
-                    if *table.get_unchecked(*classes.get_unchecked(j as usize) as usize) != 0 {
+                for word in first..(i as usize).div_ceil(64) {
+                    let mut held = 0u64;
+                    for (class, allowed) in table.iter().enumerate() {
+                        if *allowed != 0 {
+                            held |= *members.get_unchecked(class * words + word);
+                        }
+                    }
+                    if word == first {
+                        held &= u64::MAX << (min as usize & 63);
+                    }
+                    while held != 0 {
+                        let j = (word * 64 + held.trailing_zeros() as usize) as c_int;
                         $scorer(nod, j, n2, tinf, flag);
+                        held &= held - 1;
                     }
                 }
             };
@@ -95,7 +107,8 @@ pub unsafe fn dprog(nod: *mut Node, nn: c_int, tinf: *const Training, flag: c_in
             2 => pass!(backward_start),
             _ => pass!(backward_stop),
         }
-        classes[i as usize] = class_of(n2);
+        let at = i as usize;
+        members[class_of(n2) as usize * words + (at >> 6)] |= 1u64 << (at & 63);
     }
     for i in (0..nn).rev() {
         if (*nod.offset(i as isize)).strand == 1 && (*nod.offset(i as isize)).type_ != STOP {

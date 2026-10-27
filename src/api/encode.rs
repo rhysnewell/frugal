@@ -1,10 +1,10 @@
-use std::alloc::{alloc_zeroed, handle_alloc_error, Layout};
+use std::alloc::{Layout, alloc_zeroed, handle_alloc_error};
 use std::os::raw::c_int;
 
 use crate::bitmap::set;
-use crate::sequence::rcom_seq;
 use crate::node::RBS_MASKS_PER_NODE;
-use crate::types::{Gene, Mask, Node, MASK_SIZE, MAX_GENES, MAX_MASKS, MAX_SEQ, STT_NOD};
+use crate::sequence::rcom_seq;
+use crate::types::{Gene, MASK_SIZE, MAX_GENES, MAX_MASKS, MAX_SEQ, Mask, Node, STT_NOD};
 
 /// Internal scratch buffers for the prediction pipeline.
 pub(crate) struct SequenceBuffer {
@@ -15,6 +15,8 @@ pub(crate) struct SequenceBuffer {
     pub genes: Vec<Gene>,
     pub masks: Vec<Mask>,
     pub rbs_masks: Vec<u32>,
+    pub forward_mers: Vec<u16>,
+    pub reverse_mers: Vec<u16>,
     pub nmask: c_int,
     prev_len: usize,
     prev_nn: usize,
@@ -41,6 +43,8 @@ impl SequenceBuffer {
             genes: zeroed_vec(MAX_GENES),
             masks: zeroed_vec(MAX_MASKS),
             rbs_masks: Vec::new(),
+            forward_mers: Vec::new(),
+            reverse_mers: Vec::new(),
             nmask: 0,
             prev_len: 0,
             prev_nn: 0,

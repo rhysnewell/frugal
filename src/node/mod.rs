@@ -19,6 +19,7 @@
 *******************************************************************************/
 
 use std::ffi::CStr;
+use std::mem::MaybeUninit;
 use std::os::raw::{c_char, c_int, c_void};
 
 use crate::sequence::{
@@ -54,6 +55,12 @@ unsafe fn clear_next_node(nodes: *mut Node, nn: c_int) -> *mut Node {
     let node = nodes.offset(nn as isize);
     std::ptr::write(node, std::mem::zeroed());
     node
+}
+
+// Nodes are written through the pointer, so the Vec stays empty and its capacity is the room.
+pub fn node_room(nodes: &mut Vec<MaybeUninit<Node>>, slen: c_int) -> *mut Node {
+    nodes.reserve_exact(slen.max(0) as usize / 8);
+    nodes.as_mut_ptr() as *mut Node
 }
 
 mod build;
